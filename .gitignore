@@ -15,3 +15,6 @@ yarn-error.log*
 # OS / editor
 .DS_Store
 .vscode/
+
+# local reference (cheat sheet, notes)
+CHEATSHEET.md
