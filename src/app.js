@@ -1,0 +1,36 @@
+const express = require('express')
+const tasksRouter = require('./routes/tasks.routes')
+const logger = require('./middlewares/logger')
+const errorHandler = require('./middlewares/errorHandler')
+
+const app = express()
+
+app.use(express.json())
+app.use(logger)
+
+// Liveness
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', service: process.env.SERVICE_NAME || 'node-api' })
+})
+
+// Readiness
+app.get('/ready', (req, res) => {
+  res.json({ status: 'ready', service: process.env.SERVICE_NAME || 'node-api' })
+})
+
+// Info
+app.get('/info', (req, res) => {
+  res.json({
+    service: process.env.SERVICE_NAME || 'node-api',
+    port: process.env.PORT ? Number(process.env.PORT) : 3000,
+    node: process.version,
+    uptimeSec: Math.floor(process.uptime())
+  })
+})
+
+app.use('/tasks', tasksRouter)
+
+// error middleware — всегда последним
+app.use(errorHandler)
+
+module.exports = app
