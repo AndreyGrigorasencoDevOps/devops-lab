@@ -3,6 +3,18 @@ const tasksRouter = require('./routes/tasks.routes')
 const logger = require('./middlewares/logger')
 const errorHandler = require('./middlewares/errorHandler')
 
+
+// Load .env only in non-production environments (local development)
+if (process.env.NODE_ENV !== 'production') {
+  try {
+    require('dotenv').config()
+  } catch (err) {
+    // dotenv is optional; ignore if not installed
+  }
+}
+// DB init
+require('./config/db')
+
 const app = express()
 
 app.use(express.json())
@@ -30,7 +42,7 @@ app.get('/info', (req, res) => {
 
 app.use('/tasks', tasksRouter)
 
-// error middleware — всегда последним
+// error middleware
 app.use(errorHandler)
 
 module.exports = app
