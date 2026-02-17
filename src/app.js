@@ -2,7 +2,7 @@ const express = require('express')
 const tasksRouter = require('./routes/tasks.routes')
 const logger = require('./middlewares/logger')
 const errorHandler = require('./middlewares/errorHandler')
-
+const { checkDatabase } = require('./services/readiness.service')
 
 // Load .env only in non-production environments (local development)
 if (process.env.NODE_ENV !== 'production') {
@@ -26,8 +26,16 @@ app.get('/health', (req, res) => {
 })
 
 // Readiness
-app.get('/ready', (req, res) => {
-  res.json({ status: 'ready', service: process.env.SERVICE_NAME || 'node-api' })
+app.get('/ready', async (req, res) => {
+  try {
+    await checkDatabase()
+    res.json({ status: 'ready', service: process.env.SERVICE_NAME || 'node-api' })
+  } catch (err) {
+    res.status(503).json({
+      status: 'not_ready',
+      service: process.env.SERVICE_NAME || 'node-api'
+    })
+  }
 })
 
 // Info
