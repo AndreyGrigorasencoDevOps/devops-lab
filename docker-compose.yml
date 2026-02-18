@@ -11,13 +11,27 @@ services:
       - DB_NAME=${DB_NAME:-tasksdb}
     depends_on:
       - db
+    healthcheck:
+     test:
+       [
+         "CMD",
+         "node",
+         "-e",
+         "require('http').get('http://127.0.0.1:3000/health', r=>process.exit(r.statusCode===200?0:1)).on('error', ()=>process.exit(1))"
+       ]
+     interval: 10s
+     timeout: 5s
+     retries: 5
+     start_period: 30s
+
+    restart: unless-stopped
 
   db:
     image: postgres:15
     environment:
-      POSTGRES_USER: REDACTED
-      POSTGRES_PASSWORD: REDACTED
-      POSTGRES_DB: tasksdb
+      POSTGRES_USER: ${DB_USER:?DB_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:-tasksdb}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
