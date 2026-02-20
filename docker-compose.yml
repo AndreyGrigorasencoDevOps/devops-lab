@@ -1,5 +1,6 @@
 services:
   api:
+    image: task-api:${IMAGE_TAG:-dev}
     build: .
     ports:
       - "3000:3000"
@@ -25,6 +26,7 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
+    stop_grace_period: 20s
 
   db:
     image: postgres:15
