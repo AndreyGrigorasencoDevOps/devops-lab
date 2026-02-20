@@ -1,5 +1,8 @@
-const pool = require('../config/db')
-const retry = require('../utils/retry')
+const pool = require("../config/db");
+const retry = require("../utils/retry");
+const logger = require("../utils/logger");
+
+const SERVICE_NAME = process.env.SERVICE_NAME || "node-api";
 
 async function initDB() {
   await retry(async () => {
@@ -8,10 +11,10 @@ async function initDB() {
         id SERIAL PRIMARY KEY,
         title TEXT NOT NULL
       );
-    `)
-  })
+    `);
+  });
 
-  console.log('Database initialized')
+  logger.info({ service: SERVICE_NAME }, "Database initialized");
 }
 
-module.exports = initDB
+module.exports = initDB;

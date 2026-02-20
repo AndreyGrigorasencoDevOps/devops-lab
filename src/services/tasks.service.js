@@ -20,10 +20,10 @@ exports.create = (title) => {
 
 exports.update = (id, patch) => {
   const task = tasks.find(t => t.id === id)
-  if (!task) return null
+  if (!task) {return null}
 
-  if (patch.title !== undefined) task.title = patch.title
-  if (patch.completed !== undefined) task.completed = patch.completed
+  if (patch.title !== undefined) {task.title = patch.title}
+  if (patch.completed !== undefined) {task.completed = patch.completed}
 
   task.updatedAt = new Date().toISOString()
   return task
@@ -31,6 +31,6 @@ exports.update = (id, patch) => {
 
 exports.remove = (id) => {
   const idx = tasks.findIndex(t => t.id === id)
-  if (idx === -1) return null
+  if (idx === -1) {return null}
   return tasks.splice(idx, 1)[0]
 }

@@ -18,7 +18,7 @@ exports.getById = (req, res) => {
   const id = parseId(req)
   const task = tasksService.getById(id)
 
-  if (!task) return res.status(404).json({ error: 'Task not found' })
+  if (!task) {return res.status(404).json({ error: 'Task not found' })}
   res.json(task)
 }
 
@@ -52,7 +52,7 @@ exports.update = (req, res) => {
     completed
   })
 
-  if (!updated) return res.status(404).json({ error: 'Task not found' })
+  if (!updated) {return res.status(404).json({ error: 'Task not found' })}
   res.json(updated)
 }
 
@@ -60,6 +60,6 @@ exports.remove = (req, res) => {
   const id = parseId(req)
   const removed = tasksService.remove(id)
 
-  if (!removed) return res.status(404).json({ error: 'Task not found' })
+  if (!removed) {return res.status(404).json({ error: 'Task not found' })}
   res.json({ deleted: removed })
 }
