@@ -35,7 +35,7 @@ jobs:
         uses: SonarSource/sonarcloud-github-action@v2
         with:
           args: >
-            -Dsonar.projectKey=YOUR_PROJECT_KEY
-            -Dsonar.organization=YOUR_ORG
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT }}
+            -Dsonar.organization=${{ vars.SONAR_ORG }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
