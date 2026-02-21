@@ -30,3 +30,12 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Sonar Scan
+        uses: SonarSource/sonarcloud-github-action@v2
+        with:
+          args: >
+            -Dsonar.projectKey=YOUR_PROJECT_KEY
+            -Dsonar.organization=YOUR_ORG
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
