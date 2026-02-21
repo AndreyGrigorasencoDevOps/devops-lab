@@ -18,6 +18,7 @@ if (process.env.NODE_ENV !== "production") {
 require('./config/db');
 
 const app = express();
+app.disable('x-powered-by');
 
 app.use(express.json());
 app.use(httpLogger);
