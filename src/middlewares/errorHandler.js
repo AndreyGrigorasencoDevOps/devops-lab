@@ -1,17 +1,30 @@
-const logger = require('../utils/logger');
+const logger = require('../utils/logger')
 
 module.exports = function errorHandler(err, req, res, _next) {
   const status =
-    err.status && Number.isInteger(err.status)
+    Number.isInteger(err.status) && err.status > 0
       ? err.status
-      : 500;
+      : 500
 
-  logger.error({ err, path: req.path }, 'Unhandled error');
+  const isServerError = status >= 500
+
+  // Log level based on error type
+  if (isServerError) {
+    logger.error(
+      { err, path: req.path, status },
+      'Unhandled server error'
+    )
+  } else {
+    logger.warn(
+      { err: { message: err.message }, path: req.path, status },
+      'Client error'
+    )
+  }
 
   const message =
-    status === 500
+    isServerError
       ? 'Internal Server Error'
-      : err.message;
+      : err.message
 
-  res.status(status).json({ error: message });
-};
+  res.status(status).json({ error: message })
+}

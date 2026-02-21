@@ -11,15 +11,18 @@ function parseId(req) {
 }
 
 exports.getAll = (req, res) => {
-  res.json(tasksService.getAll())
+  return res.json(tasksService.getAll())
 }
 
 exports.getById = (req, res) => {
   const id = parseId(req)
   const task = tasksService.getById(id)
 
-  if (!task) {return res.status(404).json({ error: 'Task not found' })}
-  res.json(task)
+  if (task) {
+    return res.json(task)
+  }
+
+  return res.status(404).json({ error: 'Task not found' })
 }
 
 exports.create = (req, res) => {
@@ -30,7 +33,7 @@ exports.create = (req, res) => {
   }
 
   const task = tasksService.create(title.trim())
-  res.status(201).json(task)
+  return res.status(201).json(task)
 }
 
 exports.update = (req, res) => {
@@ -49,17 +52,23 @@ exports.update = (req, res) => {
 
   const updated = tasksService.update(id, {
     title: title !== undefined ? title.trim() : undefined,
-    completed
+    completed,
   })
 
-  if (!updated) {return res.status(404).json({ error: 'Task not found' })}
-  res.json(updated)
+  if (updated) {
+    return res.json(updated)
+  }
+
+  return res.status(404).json({ error: 'Task not found' })
 }
 
 exports.remove = (req, res) => {
   const id = parseId(req)
   const removed = tasksService.remove(id)
 
-  if (!removed) {return res.status(404).json({ error: 'Task not found' })}
-  res.json({ deleted: removed })
+  if (removed) {
+    return res.json({ deleted: removed })
+  }
+
+  return res.status(404).json({ error: 'Task not found' })
 }
