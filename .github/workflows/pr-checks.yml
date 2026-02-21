@@ -43,3 +43,26 @@ jobs:
             -Dsonar.organization=${{ vars.SONAR_ORG }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: CI Summary
+        if: always()
+        env:
+          SONAR_URL: "https://sonarcloud.io/project/overview?id=${{ vars.SONAR_PROJECT }}"
+        run: |
+          echo '<h1 align="center">🚀 CI Report</h1>' >> $GITHUB_STEP_SUMMARY
+          echo '<p align="center"><strong>Lint</strong> · <strong>Tests</strong> · <strong>Sonar Scan</strong></p>' >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo '<table>' >> $GITHUB_STEP_SUMMARY
+          echo '<tr><th>Step</th><th>Description</th></tr>' >> $GITHUB_STEP_SUMMARY
+          echo '<tr><td>Lint</td><td>ESLint (max-warnings=0)</td></tr>' >> $GITHUB_STEP_SUMMARY
+          echo '<tr><td>Tests</td><td>Node.js test runner</td></tr>' >> $GITHUB_STEP_SUMMARY
+          echo '<tr><td>Sonar Scan</td><td>SonarCloud quality analysis</td></tr>' >> $GITHUB_STEP_SUMMARY
+          echo '</table>' >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo '<h3>📊 SonarCloud</h3>' >> $GITHUB_STEP_SUMMARY
+          echo '<p><a href="'"$SONAR_URL"'">🔗 Open full quality report</a></p>' >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo '<details>' >> $GITHUB_STEP_SUMMARY
+          echo '<summary>Run info</summary>' >> $GITHUB_STEP_SUMMARY
+          echo 'Run: ${{ github.run_id }} · ${{ github.ref_name }} · ${{ github.event_name }}' >> $GITHUB_STEP_SUMMARY
+          echo '</details>' >> $GITHUB_STEP_SUMMARY
