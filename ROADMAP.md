@@ -26,10 +26,10 @@ Reliable CI that blocks low-quality code before merge.
 
 Objective: treat Docker image as a release artifact.
 
-- [ ] Build Docker image in GitHub Actions
-- [ ] Push image to GHCR (sha + main tags)
-- [ ] Semantic versioning (vX.Y.Z)
-- [ ] Multi-environment tagging (dev/prod)
+- [x] Build Docker image in GitHub Actions
+- [x] Push image to GHCR (sha + main tags)
+- [x] Semantic versioning (vX.Y.Z)
+- [x] Multi-environment tagging (dev/prod)
 
 Outcome:
 Every merge to main produces a versioned container image.
