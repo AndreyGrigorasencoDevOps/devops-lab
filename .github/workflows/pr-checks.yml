@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Security audit (prod deps)
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Run lint
         run: npm run lint
 
@@ -51,10 +54,11 @@ jobs:
           SONAR_URL: "https://sonarcloud.io/project/overview?id=${{ vars.SONAR_PROJECT }}"
         run: |
           echo '<h1 align="center">🚀 CI Report</h1>' >> $GITHUB_STEP_SUMMARY
-          echo '<p align="center"><strong>Lint</strong> · <strong>Tests</strong> · <strong>Sonar Scan</strong></p>' >> $GITHUB_STEP_SUMMARY
+          echo '<p align="center"><strong>Audit</strong> · <strong>Lint</strong> · <strong>Tests</strong> · <strong>Sonar Scan</strong></p>' >> $GITHUB_STEP_SUMMARY
           echo '' >> $GITHUB_STEP_SUMMARY
           echo '<table>' >> $GITHUB_STEP_SUMMARY
           echo '<tr><th>Step</th><th>Description</th></tr>' >> $GITHUB_STEP_SUMMARY
+          echo '<tr><td>Audit</td><td>npm audit (prod deps, fail on high/critical)</td></tr>' >> $GITHUB_STEP_SUMMARY
           echo '<tr><td>Lint</td><td>ESLint (max-warnings=0)</td></tr>' >> $GITHUB_STEP_SUMMARY
           echo '<tr><td>Tests</td><td>Node.js test runner</td></tr>' >> $GITHUB_STEP_SUMMARY
           echo '<tr><td>Sonar Scan</td><td>SonarCloud quality analysis</td></tr>' >> $GITHUB_STEP_SUMMARY

@@ -13,8 +13,8 @@ Objective: enforce production-grade quality gates.
 
 - [x] ESLint (strict, flat config)
 - [x] PR checks (lint + tests)
-- [ ] HTTP integration tests (supertest)
-- [ ] Test coverage reporting
+- [x] HTTP integration tests (supertest)
+- [x] Test coverage reporting
 - [ ] Conventional commits enforcement
 
 Outcome:
