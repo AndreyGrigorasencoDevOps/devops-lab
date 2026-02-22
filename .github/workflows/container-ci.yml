@@ -56,6 +56,21 @@ jobs:
     permissions:
       contents: read
 
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ vars.DB_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          POSTGRES_DB: ${{ vars.DB_NAME }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U ${{ vars.DB_USER }} -d ${{ vars.DB_NAME }}"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,8 +90,20 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Smoke test (curl /health with retry)
+        env:
+          DB_USER: ${{ vars.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ vars.DB_NAME }}
         run: |
-          cid=$(docker run -d -p "$SMOKE_PORT:$SMOKE_CONTAINER_PORT" local/smoke:test)
+          cid=$(docker run -d \
+            -p "$SMOKE_PORT:$SMOKE_CONTAINER_PORT" \
+            --add-host=host.docker.internal:host-gateway \
+            -e NODE_ENV=production \
+            -e DB_HOST=host.docker.internal \
+            -e DB_USER="$DB_USER" \
+            -e DB_PASSWORD="$DB_PASSWORD" \
+            -e DB_NAME="$DB_NAME" \
+            local/smoke:test)
           trap 'docker rm -f "$cid" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
             if curl -fsS --max-time 2 "http://127.0.0.1:$SMOKE_PORT$SMOKE_HEALTH_PATH"; then
