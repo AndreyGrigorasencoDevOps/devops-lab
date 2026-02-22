@@ -18,7 +18,9 @@ function assertTaskShape(task) {
 
 test("GET /health returns liveness", async () => {
   const res = await request(app).get("/health").expect(200)
-  assert.deepEqual(Object.keys(res.body).sort((a, b) => a.localeCompare(b)), ["service", "status"])
+  assert.ok(Object.hasOwn(res.body, "service"))
+  assert.ok(Object.hasOwn(res.body, "status"))
+  assert.equal(Object.keys(res.body).length, 2)
   assert.equal(res.body.status, "ok")
   assert.equal(typeof res.body.service, "string")
 })
@@ -26,7 +28,11 @@ test("GET /health returns liveness", async () => {
 test("GET /info returns service metadata", async () => {
   const res = await request(app).get("/info").expect(200)
 
-  assert.deepEqual(Object.keys(res.body).sort((a, b) => a.localeCompare(b)), ["node", "port", "service", "uptimeSec"])
+  assert.ok(Object.hasOwn(res.body, "service"))
+  assert.ok(Object.hasOwn(res.body, "port"))
+  assert.ok(Object.hasOwn(res.body, "node"))
+  assert.ok(Object.hasOwn(res.body, "uptimeSec"))
+  assert.equal(Object.keys(res.body).length, 4)
   assert.equal(typeof res.body.service, "string")
   assert.equal(typeof res.body.port, "number")
   assert.equal(typeof res.body.node, "string")
