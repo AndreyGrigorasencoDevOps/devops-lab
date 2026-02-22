@@ -1,0 +1,8 @@
+# Default owner for everything
+* @AndreyGrigorasencoDevOps
+
+# Infrastructure / CI ownership
+.github/workflows/ @AndreyGrigorasencoDevOps
+renovate.json @AndreyGrigorasencoDevOps
+terraform/ @AndreyGrigorasencoDevOps
+k8s/ @AndreyGrigorasencoDevOps
