@@ -1,0 +1,16 @@
+{
+    "all": true,
+    "include": ["src/**/*.js"],
+    "exclude": [
+      "src/server.js",
+      "src/config/db.js",
+      "src/db/init.js"
+    ],
+    "reporter": ["lcov", "text-summary"],
+    "reportsDirectory": "coverage",
+    "check-coverage": true,
+    "lines": 70,
+    "statements": 70,
+    "functions": 60,
+    "branches": 55
+  }
