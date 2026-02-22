@@ -15,7 +15,7 @@ Objective: enforce production-grade quality gates.
 - [x] PR checks (lint + tests)
 - [x] HTTP integration tests (supertest)
 - [x] Test coverage reporting
-- [ ] Conventional commits enforcement
+- [x] Conventional commits enforcement
 
 Outcome:
 Reliable CI that blocks low-quality code before merge.
