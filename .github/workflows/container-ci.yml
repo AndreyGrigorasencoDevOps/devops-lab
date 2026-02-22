@@ -60,13 +60,13 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: ${{ vars.DB_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          POSTGRES_DB: ${{ vars.DB_NAME }}
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: taskdb
         ports:
           - 5432:5432
         options: >-
-          --health-cmd="pg_isready -U ${{ vars.DB_USER }} -d ${{ vars.DB_NAME }}"
+          --health-cmd="pg_isready -U postgres -d taskdb"
           --health-interval=5s
           --health-timeout=3s
           --health-retries=20
@@ -90,19 +90,16 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Smoke test (curl /health with retry)
-        env:
-          DB_USER: ${{ vars.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_NAME: ${{ vars.DB_NAME }}
         run: |
           cid=$(docker run -d \
             -p "$SMOKE_PORT:$SMOKE_CONTAINER_PORT" \
             --add-host=host.docker.internal:host-gateway \
             -e NODE_ENV=production \
             -e DB_HOST=host.docker.internal \
-            -e DB_USER="$DB_USER" \
-            -e DB_PASSWORD="$DB_PASSWORD" \
-            -e DB_NAME="$DB_NAME" \
+            -e DB_PORT=5432 \
+            -e DB_USER=postgres \
+            -e DB_PASSWORD=postgres \
+            -e DB_NAME=taskdb \
             local/smoke:test)
           trap 'docker rm -f "$cid" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
