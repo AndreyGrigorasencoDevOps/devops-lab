@@ -1,7 +1,7 @@
 # devops-lab
 
 A small **Node.js (Express)** API that provides a **tasks CRUD** and system endpoints. It’s used as a playground for **DevOps practices**: Docker, environment-based config, PostgreSQL, health/readiness checks, and CI (GitHub Actions).
-See [Roadmap](./ROADMAP.md) for the platform evolution plan.
+See [Roadmap](./docs/ROADMAP.md) for the platform evolution plan.
 
 ---
 
