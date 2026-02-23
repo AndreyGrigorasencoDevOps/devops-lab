@@ -51,15 +51,15 @@ Objective: deploy containerized service to Azure quickly (prove cloud deployment
 
 ### 3.1 Azure prep
 
-- [ ] Create Azure subscription setup notes (resource naming, region, budget alert)
-- [ ] Create a Resource Group for the project (manual is OK for Stage 3 fast path)
-- [ ] Decide environment naming: dev = main branch deployments, prod = release tag deployments
+- [x] Create Azure subscription setup notes (resource naming, region, budget alert)
+- [x] Create a Resource Group for the project (manual is OK for Stage 3 fast path)
+- [x] Decide environment naming: dev = main branch deployments, prod = release tag deployments
 
 ### 3.2 Azure Container Registry (ACR)
 
-- [ ] Create ACR (SKU: Basic)
-- [ ] Enable admin user: OFF (avoid username/password)
-- [ ] Confirm ACR login server name (e.g. xxx.azurecr.io)
+- [x] Create ACR (SKU: Basic)
+- [x] Enable admin user: OFF (avoid username/password)
+- [x] Confirm ACR login server name (e.g. xxx.azurecr.io)
 
 ### 3.3 Container Apps (initial target)
 
