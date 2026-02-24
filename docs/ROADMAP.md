@@ -63,11 +63,11 @@ Objective: deploy containerized service to Azure quickly (prove cloud deployment
 
 ### 3.3 Container Apps (initial target)
 
-- [ ] Create Container Apps Environment (Log Analytics workspace auto-created or explicit)
-- [ ] Create task-api-dev Container App (initial deployment can be from GHCR just to validate platform)
-- [ ] Configure ingress (external), target port = app port (e.g. 3000)
-- [ ] Configure environment variables for app: NODE_ENV=production, DB settings (temporary, dev only), LOG_LEVEL=info
-- [ ] Verify endpoints: /health returns 200, basic API endpoint returns expected response
+- [x] Create Container Apps Environment (Log Analytics workspace auto-created or explicit)
+- [x] Create task-api-dev Container App (initial deployment can be from GHCR just to validate platform)
+- [x] Configure ingress (external), target port = app port (e.g. 3000)
+- [x] Configure environment variables for app: NODE_ENV=production, DB settings (temporary, dev only), LOG_LEVEL=info
+- [x] Verify endpoints: /health returns 200, basic API endpoint returns expected response
 
 ### 3.4 CI deploy to Azure (dev)
 
