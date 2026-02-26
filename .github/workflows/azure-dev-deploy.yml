@@ -1,0 +1,115 @@
+name: CI Deploy to Azure (dev)
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE_NAME: task-api
+
+jobs:
+  build_push_deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set metadata
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "image_dev=${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:dev" >> "$GITHUB_OUTPUT"
+          echo "image_sha=${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Login to ACR (token via Azure)
+        run: |
+          az acr login --name "${{ vars.ACR_NAME }}"
+
+      - name: Build image
+        run: |
+          docker build \
+            -t "${{ steps.meta.outputs.image_dev }}" \
+            -t "${{ steps.meta.outputs.image_sha }}" \
+            .
+
+      - name: Push image
+        run: |
+          docker push "${{ steps.meta.outputs.image_dev }}"
+          docker push "${{ steps.meta.outputs.image_sha }}"
+
+      # ---- Make Container App pull from ACR without secrets ----
+      - name: Ensure Container App has system-assigned identity
+        id: appid
+        run: |
+          PRINCIPAL_ID=$(az containerapp identity assign \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            --system-assigned \
+            --query principalId -o tsv)
+          echo "principal_id=$PRINCIPAL_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Grant AcrPull to Container App identity (idempotent)
+        run: |
+          ACR_ID=$(az acr show --name "${{ vars.ACR_NAME }}" --query id -o tsv)
+
+          # Create role assignment; if it already exists, ignore the error
+          az role assignment create \
+            --assignee-object-id "${{ steps.appid.outputs.principal_id }}" \
+            --assignee-principal-type ServicePrincipal \
+            --role AcrPull \
+            --scope "$ACR_ID" \
+          || true
+
+      - name: Configure Container App registry to use Managed Identity
+        run: |
+          az containerapp registry set \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            --server "${{ vars.ACR_LOGIN_SERVER }}" \
+            --identity system
+
+      # ---- Deploy ----
+      - name: Update Container App to new image (shortsha)
+        run: |
+          az containerapp update \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            --image "${{ steps.meta.outputs.image_sha }}"
+
+      # ---- Validate ----
+      - name: Validate active revision is running the expected image
+        run: |
+          ACTIVE_IMAGE=$(az containerapp revision list \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            --query "[?properties.active==\`true\`][0].properties.template.containers[0].image" -o tsv)
+
+          echo "Active image: $ACTIVE_IMAGE"
+          if [ "$ACTIVE_IMAGE" != "${{ steps.meta.outputs.image_sha }}" ]; then
+            echo "ERROR: Active image is not the expected one."
+            exit 1
+          fi
+
+      - name: Validate /health returns 200
+        run: |
+          FQDN=$(az containerapp show \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+
+          echo "FQDN=$FQDN"
+          curl -fsS "https://$FQDN/health" | cat

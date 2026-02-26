@@ -1,0 +1,32 @@
+name: Azure OIDC Login (dev)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  azure-login:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure account context
+        run: |
+          az account show --output table
+          az group show --name "${{ vars.AZURE_RG }}" --output table
+          az acr show --name "${{ vars.ACR_NAME }}" --output table
+          az containerapp show \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            --query "{fqdn:properties.configuration.ingress.fqdn, revision:properties.latestRevisionName, state:properties.provisioningState}" \
+            -o json
