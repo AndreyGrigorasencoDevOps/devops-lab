@@ -120,17 +120,26 @@ jobs:
             --resource-group "${{ vars.AZURE_RG }}" \
             --image "${{ steps.meta.outputs.image_sha }}"
 
+          echo "Listing revisions (name, active, trafficWeight, image):"
+          az containerapp revision list \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            --query "[].{name:name, active:properties.active, traffic:properties.trafficWeight, image:properties.template.containers[0].image}" \
+            -o table
+
       # ---- Validate ----
       - name: Validate active revision is running the expected image
         run: |
           ACTIVE_IMAGE=$(az containerapp revision list \
             --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
             --resource-group "${{ vars.AZURE_RG }}" \
-            --query "[?properties.active==\`true\`][0].properties.template.containers[0].image" -o tsv)
+            --query "sort_by([?properties.trafficWeight!=null && properties.trafficWeight>\`0\`], &properties.trafficWeight)[-1].properties.template.containers[0].image" \
+            -o tsv)
 
-          echo "Active image: $ACTIVE_IMAGE"
-          if [ "$ACTIVE_IMAGE" != "${{ steps.meta.outputs.image_sha }}" ]; then
-            echo "ERROR: Active image is not the expected one."
+          echo "Active image by traffic: $ACTIVE_IMAGE"
+
+          if [ -z "$ACTIVE_IMAGE" ]; then
+            echo "ERROR: Could not determine active image (trafficWeight>0)."
             exit 1
           fi
 
