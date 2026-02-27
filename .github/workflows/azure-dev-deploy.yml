@@ -1,4 +1,4 @@
-name: CI Deploy to Azure (dev)
+name: CI Azure Deployment (dev)
 
 on:
   push:
@@ -13,7 +13,32 @@ env:
   IMAGE_NAME: task-api
 
 jobs:
-  build_push_deploy:
+  verify:
+    name: Verify Azure context
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure account context
+        run: |
+          az account show --output table
+          az group show --name "${{ vars.AZURE_RG }}" --output table
+          az acr show --name "${{ vars.ACR_NAME }}" --output table
+          az containerapp show \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            --query "{fqdn:properties.configuration.ingress.fqdn, revision:properties.latestRevisionName, state:properties.provisioningState}" \
+            -o json
+
+  build-push-deploy:
+    name: Build, push & deploy
+    needs: verify
     runs-on: ubuntu-latest
 
     steps:
@@ -66,13 +91,18 @@ jobs:
         run: |
           ACR_ID=$(az acr show --name "${{ vars.ACR_NAME }}" --query id -o tsv)
 
-          # Create role assignment; if it already exists, ignore the error
-          az role assignment create \
+          OUTPUT=$(az role assignment create \
             --assignee-object-id "${{ steps.appid.outputs.principal_id }}" \
             --assignee-principal-type ServicePrincipal \
             --role AcrPull \
-            --scope "$ACR_ID" \
-          || true
+            --scope "$ACR_ID" 2>&1) || {
+            if echo "$OUTPUT" | grep -qi "conflict\|already exists"; then
+              echo "Role assignment already exists — skipping."
+            else
+              echo "$OUTPUT" >&2
+              exit 1
+            fi
+          }
 
       - name: Configure Container App registry to use Managed Identity
         run: |
@@ -112,4 +142,4 @@ jobs:
             --query "properties.configuration.ingress.fqdn" -o tsv)
 
           echo "FQDN=$FQDN"
-          curl -fsS "https://$FQDN/health" | cat
+          curl -fsS "https://$FQDN/health"
