@@ -8,20 +8,6 @@ const SERVICE_NAME = process.env.SERVICE_NAME || "node-api";
 
 let server;
 
-async function start() {
-  try {
-    await initDB();
-
-    // Bind to 0.0.0.0 to allow external access (required for Docker)
-    server = app.listen(PORT, "0.0.0.0", () => {
-      logger.info({ service: SERVICE_NAME, port: PORT }, "Server started");
-    });
-  } catch (err) {
-    logger.error({ err, service: SERVICE_NAME }, "Startup failed");
-    process.exit(1);
-  }
-}
-
 async function shutdown(signal) {
   logger.info(
     { service: SERVICE_NAME, signal },
@@ -49,4 +35,13 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-start();
+initDB()
+  .then(() => {
+    server = app.listen(PORT, "0.0.0.0", () => {
+      logger.info({ service: SERVICE_NAME, port: PORT }, "Server started");
+    });
+  })
+  .catch((err) => {
+    logger.error({ err, service: SERVICE_NAME }, "Startup failed");
+    process.exit(1);
+  });
