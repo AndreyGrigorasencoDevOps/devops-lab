@@ -45,7 +45,8 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
       - name: Sonar Scan
-        uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8
+        if: ${{ secrets.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-scan-action@v5
         with:
           args: >
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT }}
