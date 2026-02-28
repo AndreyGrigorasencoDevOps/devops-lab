@@ -1,0 +1,58 @@
+name: Image Build & Push
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE_NAME: task-api
+
+jobs:
+  build-push:
+    name: Build & push to ACR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set image tags
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "image_sha=${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "image_tag=${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "image_tag=${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login to ACR
+        run: az acr login --name "${{ vars.ACR_NAME }}"
+
+      - name: Build image
+        run: |
+          docker build \
+            -t "${{ steps.meta.outputs.image_sha }}" \
+            -t "${{ steps.meta.outputs.image_tag }}" \
+            .
+
+      - name: Push image
+        run: |
+          docker push "${{ steps.meta.outputs.image_sha }}"
+          docker push "${{ steps.meta.outputs.image_tag }}"
