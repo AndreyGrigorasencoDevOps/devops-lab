@@ -12,7 +12,22 @@ module.exports = [
   // 2) Base recommended rules from ESLint
   js.configs.recommended,
 
-  // 3) Global configuration for all JS files
+  // 3) ESM entrypoint
+  {
+    files: ["**/*.mjs"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      "no-console": "error",
+    },
+  },
+
+  // 4) Global configuration for all JS files
   {
     files: ["**/*.js"],
     languageOptions: {

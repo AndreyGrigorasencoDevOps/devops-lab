@@ -3,9 +3,8 @@ process.env.LOG_LEVEL = 'fatal'
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const proxyquire = require('proxyquire').noCallThru()
 
-test('db config: registers connect handler and logs', () => {
+test('db config: createPool registers connect/error handlers', () => {
   let connectHandler
   let errorHandler
 
@@ -16,38 +15,62 @@ test('db config: registers connect handler and logs', () => {
     }
   }
 
-  function Pool() {
-    return fakePool
-  }
-
   let infoCalled = false
   let errorCalled = false
 
-  const logger = {
+  const fakeLogger = {
     info() { infoCalled = true },
     error() { errorCalled = true }
   }
 
-  const db = proxyquire('../src/config/db', {
-    pg: { Pool },
-    '../utils/logger': logger
-  })
+  const pgPath = require.resolve('pg')
+  const loggerPath = require.resolve('../src/utils/logger')
+  const dbPath = require.resolve('../src/config/db')
 
-  assert.equal(typeof db.createPool, 'function')
+  const savedPg = require.cache[pgPath]
+  const savedLogger = require.cache[loggerPath]
+  delete require.cache[dbPath]
 
-  connectHandler()
-  assert.equal(infoCalled, true)
-
-  const originalExit = process.exit
-  let exitCode = null
-  process.exit = (code) => { exitCode = code }
+  require.cache[pgPath] = {
+    id: pgPath,
+    filename: pgPath,
+    loaded: true,
+    exports: { Pool: function Pool() { return fakePool } }
+  }
+  require.cache[loggerPath] = {
+    id: loggerPath,
+    filename: loggerPath,
+    loaded: true,
+    exports: fakeLogger
+  }
 
   try {
-    errorHandler(new Error('boom'))
+    const db = require('../src/config/db')
 
-    assert.equal(errorCalled, true)
-    assert.equal(exitCode, 1)
+    assert.ok(db)
+    assert.equal(typeof db.createPool, 'function')
+
+    assert.ok(connectHandler, 'connect handler registered')
+    assert.ok(errorHandler, 'error handler registered')
+
+    connectHandler()
+    assert.equal(infoCalled, true)
+
+    const originalExit = process.exit
+    let exitCode = null
+    process.exit = (code) => { exitCode = code }
+
+    try {
+      errorHandler(new Error('boom'))
+
+      assert.equal(errorCalled, true)
+      assert.equal(exitCode, 1)
+    } finally {
+      process.exit = originalExit
+    }
   } finally {
-    process.exit = originalExit
+    delete require.cache[dbPath]
+    if (savedPg) { require.cache[pgPath] = savedPg } else { delete require.cache[pgPath] }
+    if (savedLogger) { require.cache[loggerPath] = savedLogger } else { delete require.cache[loggerPath] }
   }
 })
