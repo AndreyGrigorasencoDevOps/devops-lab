@@ -51,7 +51,7 @@ exports.update = (req, res) => {
   }
 
   const updated = tasksService.update(id, {
-    title: title !== undefined ? title.trim() : undefined,
+    title: title?.trim(),
     completed,
   })
 

@@ -13,6 +13,8 @@ jobs:
   checks:
     name: Lint + Tests
     runs-on: ubuntu-latest
+    env:
+      HAS_SONAR_TOKEN: ${{ secrets.SONAR_TOKEN != '' }}
 
     steps:
       - name: Checkout
@@ -45,7 +47,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
       - name: Sonar Scan
-        if: ${{ secrets.SONAR_TOKEN != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        if: ${{ env.HAS_SONAR_TOKEN == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: SonarSource/sonarqube-scan-action@v6
         with:
           args: >
