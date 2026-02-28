@@ -45,10 +45,3 @@ function start() {
 }
 
 module.exports = { start, shutdown };
-
-if (require.main === module) {
-  start().catch((err) => {
-    logger.error({ err, service: SERVICE_NAME }, "Startup failed");
-    process.exit(1);
-  });
-}
