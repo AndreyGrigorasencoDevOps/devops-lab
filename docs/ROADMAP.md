@@ -71,16 +71,16 @@ Objective: deploy containerized service to Azure quickly (prove cloud deployment
 
 ### 3.4 CI deploy to Azure (dev)
 
-- [ ] Add GitHub Actions workflow step: Azure login via OIDC (no secrets)
-- [ ] Push image to ACR from GitHub Actions (main branch only)
-- [ ] Update Container App image to the new ACR image (main branch only)
-- [ ] Validate “merge to main → ACR image → Container App updated”
+- [x] Add GitHub Actions workflow step: Azure login via OIDC (no secrets)
+- [x] Push image to ACR from GitHub Actions (main branch only)
+- [x] Update Container App image to the new ACR image (main branch only)
+- [x] Validate “merge to main → ACR image → Container App updated”
 
 ### 3.5 Managed identity / secure registry access
 
-- [ ] Configure Container App identity (system-assigned)
-- [ ] Grant identity AcrPull role on ACR
-- [ ] Ensure Container App pulls from ACR without credentials
+- [x] Configure Container App identity (system-assigned)
+- [x] Grant identity AcrPull role on ACR
+- [x] Ensure Container App pulls from ACR without credentials
 
 Outcome:
 Cloud-hosted API running on Azure Container Apps, updated from CI-built image, with secure registry access.

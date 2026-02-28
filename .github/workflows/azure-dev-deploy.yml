@@ -29,7 +29,6 @@ jobs:
         run: |
           az account show --output table
           az group show --name "${{ vars.AZURE_RG }}" --output table
-          az acr show --name "${{ vars.ACR_NAME }}" --output table
           az containerapp show \
             --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
             --resource-group "${{ vars.AZURE_RG }}" \
@@ -75,42 +74,6 @@ jobs:
         run: |
           docker push "${{ steps.meta.outputs.image_dev }}"
           docker push "${{ steps.meta.outputs.image_sha }}"
-
-      # ---- Make Container App pull from ACR without secrets ----
-      - name: Ensure Container App has system-assigned identity
-        id: appid
-        run: |
-          PRINCIPAL_ID=$(az containerapp identity assign \
-            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RG }}" \
-            --system-assigned \
-            --query principalId -o tsv)
-          echo "principal_id=$PRINCIPAL_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Grant AcrPull to Container App identity (idempotent)
-        run: |
-          ACR_ID=$(az acr show --name "${{ vars.ACR_NAME }}" --query id -o tsv)
-
-          OUTPUT=$(az role assignment create \
-            --assignee-object-id "${{ steps.appid.outputs.principal_id }}" \
-            --assignee-principal-type ServicePrincipal \
-            --role AcrPull \
-            --scope "$ACR_ID" 2>&1) || {
-            if echo "$OUTPUT" | grep -qi "conflict\|already exists"; then
-              echo "Role assignment already exists — skipping."
-            else
-              echo "$OUTPUT" >&2
-              exit 1
-            fi
-          }
-
-      - name: Configure Container App registry to use Managed Identity
-        run: |
-          az containerapp registry set \
-            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
-            --resource-group "${{ vars.AZURE_RG }}" \
-            --server "${{ vars.ACR_LOGIN_SERVER }}" \
-            --identity system
 
       # ---- Deploy ----
       - name: Update Container App to new image (shortsha)
