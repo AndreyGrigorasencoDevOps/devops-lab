@@ -83,3 +83,62 @@ test('errorHandler returns 4xx message and logs warn', async () => {
   assert.equal(lastWarnArgs[0].err.message, 'Bad Request')
   assert.equal(lastErrorArgs, undefined)
 })
+
+function createRes() {
+  const res = {
+    headersSent: false,
+    statusCodeSet: null,
+    body: null,
+    status(code) {
+      this.statusCodeSet = code
+      return this
+    },
+    json(payload) {
+      this.body = payload
+      return this
+    }
+  }
+  return res
+}
+
+test('errorHandler: if headers already sent -> delegates to next(err)', () => {
+  const logger = { error() {}, warn() {} }
+  const errorHandler = proxyquire('../src/middlewares/errorHandler', {
+    '../utils/logger': logger
+  })
+
+  const err = new Error('boom')
+  const req = { path: '/x', method: 'GET' }
+  const res = createRes()
+  res.headersSent = true
+
+  let nextCalledWith = null
+  function next(e) {
+    nextCalledWith = e
+  }
+
+  errorHandler(err, req, res, next)
+
+  assert.equal(nextCalledWith, err)
+})
+
+test('errorHandler: uses err.statusCode when status missing', () => {
+  let errored = false
+  const logger = {
+    error() { errored = true },
+    warn() {}
+  }
+  const errorHandler = proxyquire('../src/middlewares/errorHandler', {
+    '../utils/logger': logger
+  })
+
+  const err = Object.assign(new Error('db down'), { statusCode: 503 })
+  const req = { path: '/tasks', method: 'GET' }
+  const res = createRes()
+
+  errorHandler(err, req, res, () => {})
+
+  assert.equal(res.statusCodeSet, 503)
+  assert.deepEqual(res.body, { error: 'Internal Server Error' })
+  assert.equal(errored, true)
+})

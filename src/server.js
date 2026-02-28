@@ -32,16 +32,23 @@ async function shutdown(signal) {
   }
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+function start() {
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 
-initDB()
-  .then(() => {
+  return initDB().then(() => {
     server = app.listen(PORT, "0.0.0.0", () => {
       logger.info({ service: SERVICE_NAME, port: PORT }, "Server started");
     });
-  })
-  .catch((err) => {
+    return server;
+  });
+}
+
+module.exports = { start, shutdown };
+
+if (require.main === module) {
+  start().catch((err) => {
     logger.error({ err, service: SERVICE_NAME }, "Startup failed");
     process.exit(1);
   });
+}
