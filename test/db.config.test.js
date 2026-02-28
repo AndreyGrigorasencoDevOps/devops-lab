@@ -42,10 +42,12 @@ test('db config: registers connect handler and logs', () => {
   let exitCode = null
   process.exit = (code) => { exitCode = code }
 
-  errorHandler(new Error('boom'))
+  try {
+    errorHandler(new Error('boom'))
 
-  process.exit = originalExit
-
-  assert.equal(errorCalled, true)
-  assert.equal(exitCode, 1)
+    assert.equal(errorCalled, true)
+    assert.equal(exitCode, 1)
+  } finally {
+    process.exit = originalExit
+  }
 })

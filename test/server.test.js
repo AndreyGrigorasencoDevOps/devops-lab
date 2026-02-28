@@ -71,52 +71,55 @@ function loadServer({ initSucceeds = true, closeFails = false } = {}) {
 
 test('start: initializes DB and starts server', async () => {
   const ctx = loadServer({ initSucceeds: true })
+  try {
+    const server = await ctx.serverModule.start()
+    const state = ctx.getState()
 
-  const server = await ctx.serverModule.start()
-
-  const state = ctx.getState()
-
-  assert.ok(server)
-  assert.equal(state.listenCalled, true)
-
-  ctx.restore()
+    assert.ok(server)
+    assert.equal(state.listenCalled, true)
+  } finally {
+    ctx.restore()
+  }
 })
 
 test('shutdown: closes server and DB pool', async () => {
   const ctx = loadServer({ initSucceeds: true })
+  try {
+    await ctx.serverModule.start()
+    await ctx.serverModule.shutdown('SIGTERM')
 
-  await ctx.serverModule.start()
-  await ctx.serverModule.shutdown('SIGTERM')
+    const state = ctx.getState()
 
-  const state = ctx.getState()
-
-  assert.equal(state.closeCalled, true)
-  assert.equal(state.poolEndCalled, true)
-  assert.equal(state.exitCode, 0)
-
-  ctx.restore()
+    assert.equal(state.closeCalled, true)
+    assert.equal(state.poolEndCalled, true)
+    assert.equal(state.exitCode, 0)
+  } finally {
+    ctx.restore()
+  }
 })
 
 test('shutdown: handles close failure', async () => {
   const ctx = loadServer({ initSucceeds: true, closeFails: true })
+  try {
+    await ctx.serverModule.start()
+    await ctx.serverModule.shutdown('SIGTERM')
 
-  await ctx.serverModule.start()
-  await ctx.serverModule.shutdown('SIGTERM')
+    const state = ctx.getState()
 
-  const state = ctx.getState()
-
-  assert.equal(state.exitCode, 1)
-
-  ctx.restore()
+    assert.equal(state.exitCode, 1)
+  } finally {
+    ctx.restore()
+  }
 })
 
 test('start: rejects if initDB fails', async () => {
   const ctx = loadServer({ initSucceeds: false })
-
-  await assert.rejects(
-    async () => { await ctx.serverModule.start() },
-    { message: 'init fail' }
-  )
-
-  ctx.restore()
+  try {
+    await assert.rejects(
+      async () => { await ctx.serverModule.start() },
+      { message: 'init fail' }
+    )
+  } finally {
+    ctx.restore()
+  }
 })
