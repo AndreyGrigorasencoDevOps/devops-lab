@@ -5,7 +5,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const express = require('express')
 const request = require('supertest')
-const proxyquire = require('proxyquire')
+const proxyquire = require('proxyquire').noCallThru()
 
 test('errorHandler returns 500 with generic message and logs error', async () => {
   let errorCalls = 0

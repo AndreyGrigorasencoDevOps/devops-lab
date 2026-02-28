@@ -1,14 +1,14 @@
 {
   "name": "node-api",
   "version": "1.0.0",
-  "main": "src/server.js",
+  "main": "src/index.mjs",
   "engines": {
     "node": ">=20 <21",
     "npm": ">=10"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "start": "node src/index.mjs",
+    "dev": "nodemon src/index.mjs",
     "lint": "eslint . --max-warnings=0",
     "lint:quick": "eslint src",
     "test": "node --test",

@@ -5,11 +5,21 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const proxyquire = require('proxyquire').noCallThru()
 
-test('start: calls initDB and starts listening', async () => {
-  let initCalled = false
-  let listenCalled = false
+function loadServer({ initSucceeds = true, closeFails = false } = {}) {
+  delete require.cache[require.resolve('../src/server')]
 
-  const fakeServer = { close: (cb) => cb(null) }
+  let closeCalled = false
+  let poolEndCalled = false
+  let listenCalled = false
+  let exitCode = null
+
+  const fakeServer = {
+    close(cb) {
+      closeCalled = true
+      if (closeFails) { cb(new Error('close fail')) } else { cb() }
+    }
+  }
+
   const app = {
     listen(port, host, cb) {
       listenCalled = true
@@ -19,12 +29,26 @@ test('start: calls initDB and starts listening', async () => {
   }
 
   const initDB = () => {
-    initCalled = true
+    if (!initSucceeds) { return Promise.reject(new Error('init fail')) }
     return Promise.resolve()
   }
 
-  const pool = { end: () => Promise.resolve() }
-  const logger = { info() {}, error() {}, warn() {} }
+  const pool = {
+    async end() {
+      poolEndCalled = true
+    }
+  }
+
+  const logger = {
+    info() {},
+    error() {}
+  }
+
+  const originalExit = process.exit
+  process.exit = (code) => { exitCode = code }
+
+  const originalOn = process.on
+  process.on = () => {}
 
   const serverModule = proxyquire('../src/server', {
     './app': app,
@@ -33,50 +57,69 @@ test('start: calls initDB and starts listening', async () => {
     './utils/logger': logger
   })
 
-  const srv = await serverModule.start()
+  return {
+    serverModule,
+    restore() {
+      process.exit = originalExit
+      process.on = originalOn
+    },
+    getState() {
+      return { closeCalled, poolEndCalled, listenCalled, exitCode }
+    }
+  }
+}
 
-  assert.equal(initCalled, true)
-  assert.equal(listenCalled, true)
-  assert.equal(srv, fakeServer)
+test('start: initializes DB and starts server', async () => {
+  const ctx = loadServer({ initSucceeds: true })
+  try {
+    const server = await ctx.serverModule.start()
+    const state = ctx.getState()
+
+    assert.ok(server)
+    assert.equal(state.listenCalled, true)
+  } finally {
+    ctx.restore()
+  }
 })
 
-test('shutdown: closes server and ends pool', async () => {
-  let poolEnded = false
-  const pool = {
-    end() {
-      poolEnded = true
-      return Promise.resolve()
-    }
+test('shutdown: closes server and DB pool', async () => {
+  const ctx = loadServer({ initSucceeds: true })
+  try {
+    await ctx.serverModule.start()
+    await ctx.serverModule.shutdown('SIGTERM')
+
+    const state = ctx.getState()
+
+    assert.equal(state.closeCalled, true)
+    assert.equal(state.poolEndCalled, true)
+    assert.equal(state.exitCode, 0)
+  } finally {
+    ctx.restore()
   }
-  const logger = { info() {}, error() {}, warn() {} }
+})
 
-  const fakeServer = {
-    close(cb) {
-      cb(null)
-    }
+test('shutdown: handles close failure', async () => {
+  const ctx = loadServer({ initSucceeds: true, closeFails: true })
+  try {
+    await ctx.serverModule.start()
+    await ctx.serverModule.shutdown('SIGTERM')
+
+    const state = ctx.getState()
+
+    assert.equal(state.exitCode, 1)
+  } finally {
+    ctx.restore()
   }
+})
 
-  const originalExit = process.exit
-  let exitCode = null
-  process.exit = (code) => { exitCode = code }
-
-  const serverModule = proxyquire('../src/server', {
-    './app': {
-      listen(port, host, cb) {
-        cb()
-        return fakeServer
-      }
-    },
-    './db/init': () => Promise.resolve(),
-    './config/db': pool,
-    './utils/logger': logger
-  })
-
-  await serverModule.start()
-  await serverModule.shutdown('SIGTERM')
-
-  process.exit = originalExit
-
-  assert.equal(poolEnded, true)
-  assert.equal(exitCode, 0)
+test('start: rejects if initDB fails', async () => {
+  const ctx = loadServer({ initSucceeds: false })
+  try {
+    await assert.rejects(
+      async () => { await ctx.serverModule.start() },
+      { message: 'init fail' }
+    )
+  } finally {
+    ctx.restore()
+  }
 })
