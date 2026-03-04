@@ -1,22 +1,101 @@
-name: Deploy to Dev
+name: Build & Deploy to Dev
 
 on:
-  workflow_run:
-    workflows: ["Image Build & Push"]
-    types: [completed]
+  push:
     branches: ["main"]
+  workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
 env:
   IMAGE_NAME: task-api
 
 jobs:
+  build-push:
+    name: Build & push to DEV ACR
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      image_ref: ${{ steps.digest.outputs.image_ref }}
+      digest: ${{ steps.digest.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name "${{ vars.DEV_ACR_NAME }}"
+
+      - name: Resolve ACR login server
+        id: acr
+        run: |
+          set -euo pipefail
+          LOGIN_SERVER=$(az acr show -n "${{ vars.DEV_ACR_NAME }}" --query loginServer -o tsv)
+          echo "server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+          echo "ACR: $LOGIN_SERVER"
+
+      - name: Set image tags
+        id: meta
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "image_sha=${{ steps.acr.outputs.server }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_dev=${{ steps.acr.outputs.server }}/${{ env.IMAGE_NAME }}:dev" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: |
+          set -euo pipefail
+          docker build \
+            -t "${{ steps.meta.outputs.image_sha }}" \
+            -t "${{ steps.meta.outputs.image_dev }}" \
+            .
+
+      - name: Push image
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.meta.outputs.image_sha }}"
+          docker push "${{ steps.meta.outputs.image_dev }}"
+
+      - name: Verify image in DEV ACR
+        run: |
+          set -euo pipefail
+          az acr manifest show-metadata \
+            --name "${{ vars.DEV_ACR_NAME }}" \
+            --image "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
+            -o table
+
+      - name: Resolve digest from ACR
+        id: digest
+        run: |
+          set -euo pipefail
+          DIGEST=$(az acr manifest show-metadata \
+            --name "${{ vars.DEV_ACR_NAME }}" \
+            --image "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
+            --query digest -o tsv)
+
+          IMAGE_REF="${{ steps.acr.outputs.server }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "Digest: $DIGEST"
+          echo "Deploy ref: $IMAGE_REF"
+
   deploy:
     name: Deploy to dev
-    if: github.event.workflow_run.conclusion == 'success'
+    needs: build-push
     runs-on: ubuntu-latest
     environment: dev
 
@@ -28,18 +107,15 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Set image tag
-        id: meta
-        run: |
-          SHORT_SHA="${{ github.event.workflow_run.head_sha }}"
-          echo "image=${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHORT_SHA::7}" >> "$GITHUB_OUTPUT"
-
       - name: Update Container App
         run: |
+          set -euo pipefail
+          echo "Deploying image: ${{ needs.build-push.outputs.image_ref }}"
+
           az containerapp update \
             --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
             --resource-group "${{ vars.AZURE_RG }}" \
-            --image "${{ steps.meta.outputs.image }}"
+            --image "${{ needs.build-push.outputs.image_ref }}"
 
           echo "Listing revisions:"
           az containerapp revision list \
@@ -50,6 +126,7 @@ jobs:
 
       - name: Validate active revision
         run: |
+          set -euo pipefail
           ACTIVE_IMAGE=$(az containerapp revision list \
             --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
             --resource-group "${{ vars.AZURE_RG }}" \
@@ -65,6 +142,7 @@ jobs:
 
       - name: Validate /health
         run: |
+          set -euo pipefail
           FQDN=$(az containerapp show \
             --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
             --resource-group "${{ vars.AZURE_RG }}" \

@@ -93,15 +93,15 @@ Objective: provision Azure infrastructure programmatically (reproducible setup).
 
 ### 4.1 Terraform project structure
 
-- [ ] Create terraform/ layout: terraform/README.md, terraform/environments/dev/, terraform/environments/prod/, terraform/modules/ (optional later)
-- [ ] Add .gitignore for .terraform/, *.tfstate*
+- [x] Create terraform/ layout: terraform/README.md, terraform/environments/dev/, terraform/environments/prod/, terraform/modules/ (optional later)
+- [x] Add .gitignore for .terraform/, *.tfstate*
 
 ### 4.2 Remote Terraform state (Azure Storage)
 
-- [ ] Create Storage Account + Container for remote state
-- [ ] Configure Terraform backend (azurerm) for dev
-- [ ] Repeat/parameterize for prod
-- [ ] Document “how to init/apply” in terraform/README.md
+- [x] Create Storage Account + Container for remote state
+- [x] Configure Terraform backend (azurerm) for dev
+- [x] Repeat/parameterize for prod
+- [x] Document “how to init/apply” in terraform/README.md
 
 ### 4.3 Core resources (IaC)
 
