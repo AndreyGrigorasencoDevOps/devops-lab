@@ -8,21 +8,9 @@ resource "azurerm_resource_group" "main" {
   tags     = local.tags
 }
 
-resource "azurerm_log_analytics_workspace" "main" {
-  name                = "taskapi-${var.env}-law-uks"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-  sku                 = "PerGB2018"
-  retention_in_days   = 30
-  tags                = local.tags
-}
-
-resource "azurerm_container_app_environment" "main" {
-  name                       = "taskapi-${var.env}-cae-uks"
-  location                   = azurerm_resource_group.main.location
-  resource_group_name        = azurerm_resource_group.main.name
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
-  tags                       = local.tags
+data "azurerm_container_app_environment" "shared" {
+  name                = var.shared_cae_name
+  resource_group_name = var.shared_cae_resource_group_name
 }
 
 resource "random_string" "suffix" {
@@ -42,7 +30,7 @@ resource "azurerm_container_registry" "main" {
 
 resource "azurerm_container_app" "main" {
   name                         = "taskapi-${var.env}-app"
-  container_app_environment_id = azurerm_container_app_environment.main.id
+  container_app_environment_id = data.azurerm_container_app_environment.shared.id
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
 
@@ -77,6 +65,12 @@ resource "azurerm_container_app" "main" {
       latest_revision = true
       percentage      = 100
     }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+    ]
   }
 
   tags = local.tags

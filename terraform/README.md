@@ -77,6 +77,37 @@ terraform -chdir=terraform/environments/prod init
 
 ---
 
+## How To Init / Plan / Apply
+
+Run from repository root.
+
+`dev` must be applied first because it owns the shared CAE.
+
+### Dev
+
+```bash
+terraform -chdir=terraform/environments/dev init -backend-config=backend.hcl -reconfigure
+terraform -chdir=terraform/environments/dev plan -var-file=terraform.tfvars -out=tfplan
+terraform -chdir=terraform/environments/dev apply tfplan
+```
+
+### Prod
+
+```bash
+terraform -chdir=terraform/environments/prod init -backend-config=backend.hcl -reconfigure
+terraform -chdir=terraform/environments/prod plan -var-file=terraform.tfvars -out=tfplan
+terraform -chdir=terraform/environments/prod apply tfplan
+```
+
+If backend settings changed or state needs migration:
+
+```bash
+terraform -chdir=terraform/environments/dev init -backend-config=backend.hcl -migrate-state
+terraform -chdir=terraform/environments/prod init -backend-config=backend.hcl -migrate-state
+```
+
+---
+
 ## Terraform Workflow Commands
 
 > Examples below use **dev**. Replace `dev` with `prod` when needed.
@@ -240,6 +271,32 @@ terraform init -migrate-state
 | prod | `prod.terraform.tfstate` |
 
 Each environment is fully isolated — its own state file in the same storage container.
+
+---
+
+## Shared CAE Model (Current)
+
+The current Terraform setup uses one shared Container Apps Environment (CAE):
+
+- `dev` creates and owns the CAE (`taskapi-dev-cae-uks` by default)
+- `prod` does **not** create a second CAE and reads the shared one via:
+  - `shared_cae_name`
+  - `shared_cae_resource_group_name`
+
+Recommended apply order:
+
+```bash
+terraform -chdir=terraform/environments/dev apply
+terraform -chdir=terraform/environments/prod apply
+```
+
+If the shared CAE already exists and was created manually, import it into the `dev` state:
+
+```bash
+terraform -chdir=terraform/environments/dev import \
+  azurerm_container_app_environment.main \
+  "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/taskapi-dev-rg-uks/providers/Microsoft.App/managedEnvironments/taskapi-dev-cae-uks"
+```
 
 ---
 

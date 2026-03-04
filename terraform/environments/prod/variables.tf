@@ -19,6 +19,18 @@ variable "location" {
   default     = "uksouth"
 }
 
+variable "shared_cae_name" {
+  type        = string
+  description = "Name of the shared Container Apps Environment to use for prod."
+  default     = "taskapi-dev-cae-uks"
+}
+
+variable "shared_cae_resource_group_name" {
+  type        = string
+  description = "Resource group where the shared Container Apps Environment exists."
+  default     = "taskapi-dev-rg-uks"
+}
+
 variable "tags" {
   type        = map(string)
   description = "Common tags applied to all resources."
