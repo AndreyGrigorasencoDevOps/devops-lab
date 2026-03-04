@@ -79,8 +79,8 @@ jobs:
           echo "Looking up ${{ vars.DEV_ACR_NAME }}/${{ env.IMAGE_NAME }}:$TAG"
 
           DIGEST=$(az acr manifest show-metadata \
-            --name "${{ vars.DEV_ACR_NAME }}" \
-            --image "${{ env.IMAGE_NAME }}:$TAG" \
+            --registry "${{ vars.DEV_ACR_NAME }}" \
+            --name "${{ env.IMAGE_NAME }}:$TAG" \
             --query digest -o tsv) || {
             echo "::error::Image ${{ env.IMAGE_NAME }}:$TAG not found in DEV ACR."
             echo "Ensure this commit was deployed to dev first (push to main triggers the build)."
@@ -112,8 +112,8 @@ jobs:
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           SOURCE_DIGEST="${{ steps.digest.outputs.digest }}"
           PROD_DIGEST=$(az acr manifest show-metadata \
-            --name "${{ vars.PROD_ACR_NAME }}" \
-            --image "${{ env.IMAGE_NAME }}:${VERSION_TAG}" \
+            --registry "${{ vars.PROD_ACR_NAME }}" \
+            --name "${{ env.IMAGE_NAME }}:${VERSION_TAG}" \
             --query digest -o tsv)
 
           if [ -z "$PROD_DIGEST" ]; then

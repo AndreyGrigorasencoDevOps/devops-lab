@@ -74,17 +74,21 @@ jobs:
         run: |
           set -euo pipefail
           az acr manifest show-metadata \
-            --name "${{ vars.DEV_ACR_NAME }}" \
-            --image "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
+            --registry "${{ vars.DEV_ACR_NAME }}" \
+            --name "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
             -o table
+          az acr manifest show-metadata \
+            --registry "${{ vars.DEV_ACR_NAME }}" \
+            --name "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
+            --query "digest" -o tsv
 
       - name: Resolve digest from ACR
         id: digest
         run: |
           set -euo pipefail
           DIGEST=$(az acr manifest show-metadata \
-            --name "${{ vars.DEV_ACR_NAME }}" \
-            --image "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
+            --registry "${{ vars.DEV_ACR_NAME }}" \
+            --name "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
             --query digest -o tsv)
 
           IMAGE_REF="${{ steps.acr.outputs.server }}/${{ env.IMAGE_NAME }}@${DIGEST}"
