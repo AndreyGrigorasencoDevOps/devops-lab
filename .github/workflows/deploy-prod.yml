@@ -21,11 +21,14 @@ env:
   IMAGE_NAME: task-api
 
 jobs:
-  promote:
-    name: Promote image to PROD ACR
+  resolve_source:
+    name: Resolve source image from DEV ACR
     runs-on: ubuntu-latest
+    environment: dev
     outputs:
-      prod_image: ${{ steps.verify.outputs.prod_image }}
+      source_digest: ${{ steps.digest.outputs.digest }}
+      source_image: ${{ steps.source_image.outputs.source_image }}
+      version_tag: ${{ steps.version.outputs.tag }}
 
     steps:
       - name: Azure login (OIDC)
@@ -60,26 +63,15 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Version tag: $TAG"
 
-      - name: Resolve ACR login servers
-        id: acr
-        run: |
-          set -euo pipefail
-          DEV_LOGIN_SERVER=$(az acr show -n "${{ vars.DEV_ACR_NAME }}" --query loginServer -o tsv)
-          PROD_LOGIN_SERVER=$(az acr show -n "${{ vars.PROD_ACR_NAME }}" --query loginServer -o tsv)
-          echo "dev_server=$DEV_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
-          echo "prod_server=$PROD_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
-          echo "DEV ACR: $DEV_LOGIN_SERVER"
-          echo "PROD ACR: $PROD_LOGIN_SERVER"
-
       - name: Resolve digest from DEV ACR
         id: digest
         run: |
           set -euo pipefail
           TAG="${{ steps.source.outputs.tag }}"
-          echo "Looking up ${{ vars.DEV_ACR_NAME }}/${{ env.IMAGE_NAME }}:$TAG"
+          echo "Looking up ${{ vars.ACR_NAME }}/${{ env.IMAGE_NAME }}:$TAG"
 
           DIGEST=$(az acr manifest show-metadata \
-            --registry "${{ vars.DEV_ACR_NAME }}" \
+            --registry "${{ vars.ACR_NAME }}" \
             --name "${{ env.IMAGE_NAME }}:$TAG" \
             --query digest -o tsv) || {
             echo "::error::Image ${{ env.IMAGE_NAME }}:$TAG not found in DEV ACR."
@@ -90,16 +82,40 @@ jobs:
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "Source digest: $DIGEST"
 
+      - name: Build source image ref
+        id: source_image
+        run: |
+          set -euo pipefail
+          SOURCE_IMAGE="${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}@${{ steps.digest.outputs.digest }}"
+          echo "source_image=$SOURCE_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Source image: $SOURCE_IMAGE"
+
+  promote:
+    name: Promote image to PROD ACR
+    needs: resolve_source
+    runs-on: ubuntu-latest
+    environment: prod
+    outputs:
+      prod_image: ${{ steps.verify.outputs.prod_image }}
+
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
       - name: Import image by digest from DEV ACR to PROD ACR
         id: import
         run: |
           set -euo pipefail
-          SOURCE="${{ steps.acr.outputs.dev_server }}/${{ env.IMAGE_NAME }}@${{ steps.digest.outputs.digest }}"
-          VERSION_TAG="${{ steps.version.outputs.tag }}"
+          SOURCE="${{ needs.resolve_source.outputs.source_image }}"
+          VERSION_TAG="${{ needs.resolve_source.outputs.version_tag }}"
 
-          echo "Importing $SOURCE -> ${{ vars.PROD_ACR_NAME }}"
+          echo "Importing $SOURCE -> ${{ vars.ACR_NAME }}"
           az acr import \
-            --name "${{ vars.PROD_ACR_NAME }}" \
+            --name "${{ vars.ACR_NAME }}" \
             --source "$SOURCE" \
             --image "${{ env.IMAGE_NAME }}:${VERSION_TAG}" \
             --image "${{ env.IMAGE_NAME }}:latest" \
@@ -109,10 +125,10 @@ jobs:
         id: verify
         run: |
           set -euo pipefail
-          VERSION_TAG="${{ steps.version.outputs.tag }}"
-          SOURCE_DIGEST="${{ steps.digest.outputs.digest }}"
+          VERSION_TAG="${{ needs.resolve_source.outputs.version_tag }}"
+          SOURCE_DIGEST="${{ needs.resolve_source.outputs.source_digest }}"
           PROD_DIGEST=$(az acr manifest show-metadata \
-            --registry "${{ vars.PROD_ACR_NAME }}" \
+            --registry "${{ vars.ACR_NAME }}" \
             --name "${{ env.IMAGE_NAME }}:${VERSION_TAG}" \
             --query digest -o tsv)
 
@@ -126,7 +142,7 @@ jobs:
             exit 1
           fi
 
-          PROD_IMAGE="${{ steps.acr.outputs.prod_server }}/${{ env.IMAGE_NAME }}@${PROD_DIGEST}"
+          PROD_IMAGE="${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}@${PROD_DIGEST}"
           echo "prod_image=$PROD_IMAGE" >> "$GITHUB_OUTPUT"
           echo "PROD digest for tag ${VERSION_TAG}: $PROD_DIGEST"
           echo "Promoted: $PROD_IMAGE (tag: $VERSION_TAG)"
@@ -149,6 +165,11 @@ jobs:
         run: |
           set -euo pipefail
           echo "Deploying image: ${{ needs.promote.outputs.prod_image }}"
+
+          az containerapp show \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            -o table
 
           az containerapp update \
             --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
