@@ -37,13 +37,13 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Login to ACR
-        run: az acr login --name "${{ vars.DEV_ACR_NAME }}"
+        run: az acr login --name "${{ vars.ACR_NAME }}"
 
       - name: Resolve ACR login server
         id: acr
         run: |
           set -euo pipefail
-          LOGIN_SERVER=$(az acr show -n "${{ vars.DEV_ACR_NAME }}" --query loginServer -o tsv)
+          LOGIN_SERVER="${{ vars.ACR_LOGIN_SERVER }}"
           echo "server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
           echo "ACR: $LOGIN_SERVER"
 
@@ -74,11 +74,11 @@ jobs:
         run: |
           set -euo pipefail
           az acr manifest show-metadata \
-            --registry "${{ vars.DEV_ACR_NAME }}" \
+            --registry "${{ vars.ACR_NAME }}" \
             --name "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
             -o table
           az acr manifest show-metadata \
-            --registry "${{ vars.DEV_ACR_NAME }}" \
+            --registry "${{ vars.ACR_NAME }}" \
             --name "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
             --query "digest" -o tsv
 
@@ -87,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           DIGEST=$(az acr manifest show-metadata \
-            --registry "${{ vars.DEV_ACR_NAME }}" \
+            --registry "${{ vars.ACR_NAME }}" \
             --name "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}" \
             --query digest -o tsv)
 
@@ -115,6 +115,11 @@ jobs:
         run: |
           set -euo pipefail
           echo "Deploying image: ${{ needs.build-push.outputs.image_ref }}"
+
+          az containerapp show \
+            --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RG }}" \
+            -o table
 
           az containerapp update \
             --name "${{ vars.AZURE_CONTAINERAPP_NAME }}" \
