@@ -118,3 +118,15 @@ variable "app_secrets" {
   default     = {}
   sensitive   = true
 }
+
+variable "key_vault_allowed_ip_cidrs" {
+  type        = list(string)
+  description = "Public CIDRs allowed to reach Key Vault when firewall is enabled."
+  default     = []
+}
+
+variable "key_vault_allowed_subnet_ids" {
+  type        = list(string)
+  description = "Subnet IDs allowed to reach Key Vault when firewall is enabled."
+  default     = []
+}

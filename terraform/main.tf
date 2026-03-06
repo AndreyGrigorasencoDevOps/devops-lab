@@ -59,17 +59,24 @@ data "azurerm_container_app_environment" "shared" {
 }
 
 resource "azurerm_key_vault" "main" {
-  count                       = var.use_shared_key_vault ? 0 : 1
-  name                        = coalesce(var.key_vault_name, "${var.project}-${var.env}-kv-uks")
-  location                    = azurerm_resource_group.main.location
-  resource_group_name         = azurerm_resource_group.main.name
-  tenant_id                   = data.azurerm_client_config.current.tenant_id
-  sku_name                    = "standard"
-  enable_rbac_authorization   = true
-  soft_delete_retention_days  = 7
-  purge_protection_enabled    = false
+  count                         = var.use_shared_key_vault ? 0 : 1
+  name                          = coalesce(var.key_vault_name, "${var.project}-${var.env}-kv-uks")
+  location                      = azurerm_resource_group.main.location
+  resource_group_name           = azurerm_resource_group.main.name
+  tenant_id                     = data.azurerm_client_config.current.tenant_id
+  sku_name                      = "standard"
+  enable_rbac_authorization     = true
+  soft_delete_retention_days    = 7
+  purge_protection_enabled      = false
   public_network_access_enabled = true
-  tags                        = local.tags
+  tags                          = local.tags
+
+  network_acls {
+    bypass                     = "AzureServices"
+    default_action             = "Deny"
+    ip_rules                   = var.key_vault_allowed_ip_cidrs
+    virtual_network_subnet_ids = var.key_vault_allowed_subnet_ids
+  }
 }
 
 data "azurerm_key_vault" "shared" {
