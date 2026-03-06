@@ -12,8 +12,8 @@ terraform/
 +-- versions.tf
 +-- .terraform.lock.hcl
 +-- backend/
-¦   +-- dev.hcl
-¦   L-- prod.hcl
+|   +-- dev.hcl
+|   L-- prod.hcl
 L-- vars/
     +-- dev.tfvars
     L-- prod.tfvars
@@ -23,6 +23,7 @@ L-- vars/
 
 - Resource Group
 - Azure Container Registry (ACR)
+- Azure Database for PostgreSQL Flexible Server (+ application database)
 - Azure Container App
 - Shared-or-dedicated Container Apps Environment (CAE)
 - Shared-or-dedicated Key Vault
@@ -88,8 +89,16 @@ Important Terraform variables:
 - `shared_key_vault_name`
 - `shared_key_vault_resource_group_name`
 - `app_env_vars` (non-sensitive map)
+- PostgreSQL variables:
+  - `postgres_server_version`
+  - `postgres_sku_name`
+  - `postgres_storage_mb`
+  - `postgres_backup_retention_days`
+  - `postgres_public_network_access_enabled`
+  - `postgres_admin_username`
+  - `postgres_database_name`
 
-Secrets are managed manually in Azure Key Vault/Container Apps.
+Terraform provisions PostgreSQL and injects required `DB_*` environment values into Container App automatically.
 
 ## CI/CD integration
 
@@ -112,7 +121,7 @@ Each GitHub environment (`dev`, `prod`) must define:
 
 ### Secrets
 
-- No Terraform secret input is required; secrets are managed manually.
+- No Terraform secret input is required.
 
 ## Notes
 

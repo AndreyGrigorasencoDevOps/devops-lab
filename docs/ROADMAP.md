@@ -1,288 +1,220 @@
-Roadmap — Platform Evolution Plan (Detailed)
+# Roadmap - Platform Evolution Plan
 
-This project evolves from a simple Node.js API into a production-style DevOps platform.
+This roadmap is the source of truth for platform status and the learning path for a junior DevOps target.
 
-The goal is to simulate a real-world service lifecycle:
-design → containerize → test → build → push → deploy → scale → secure → observe.
+## How To Use This Roadmap
 
-Principles:
+- Follow the 8-week speedrun first (top-down execution order).
+- Use Stage 1-10 as the long-term platform map and progress tracker.
+- Treat each completed week/stage as portfolio evidence:
+  - workflow run links
+  - infra plan/apply outputs
+  - short write-up of decisions and tradeoffs
 
-- Everything goes through branches + PRs (no direct pushes to main).
-- Each stage ends with a working, verifiable outcome.
-- Prefer OIDC/Managed Identity over long-lived secrets.
+## 8-Week Speedrun (Balanced Track)
+
+| Week | Focus | Practical Artifact | Interview Checkpoint |
+| --- | --- | --- | --- |
+| 1 | CI foundations and code quality | Stable PR pipeline (`ci.yml`) with lint, tests, coverage, Sonar, dependency review | Explain branch protection and why PR-only checks exist |
+| 2 | Container quality gates | Trivy + smoke-tested image build flow | Explain shift-left security and smoke test purpose |
+| 3 | Azure identity and auth | OIDC-based GitHub -> Azure auth for dev/prod environments | Explain OIDC vs long-lived secrets |
+| 4 | Terraform core stack | Reproducible infra (`terraform/` root stack) for dev/prod | Explain backend state, tfvars, and drift risks |
+| 5 | Delivery workflow | Manual CD (`cd.yml`) with plan/apply/destroy and input validation | Explain safe deploy flow with plan before apply |
+| 6 | Promotion model and release safety | PROD digest promotion from DEV ACR + verification | Explain tag vs digest and supply-chain integrity |
+| 7 | Secrets and operational readiness | Key Vault contract + prereq checks + runbook execution | Explain secret ownership and runtime access model |
+| 8 | Production simulation and portfolio hardening | End-to-end demo runbook + incident drill notes | Walk through "commit -> CI -> image -> CD -> health checks" |
 
 ---
 
-## Stage 1 — Quality & Testing (Foundation)
+## Stage 1 - Quality and Testing (Foundation)
 
-Objective: enforce production-grade quality gates.
+Objective: enforce reliable quality gates before merge.
 
-- [x] ESLint (strict, flat config)
-- [x] PR checks (lint + tests)
-- [x] HTTP integration tests (supertest)
-- [x] Test coverage reporting
-- [x] Conventional commits enforcement
+- [x] ESLint strict setup (flat config)
+- [x] PR quality checks on `main`
+- [x] Unit + integration tests (`node:test`, `supertest`)
+- [x] Coverage reports (`c8` + `lcov`)
+- [x] Conventional PR title validation
+- [x] Dependency review on pull requests
+- [x] Sonar analysis in CI (token-gated and fork-safe)
 
 Outcome:
-Reliable CI that blocks low-quality code before merge.
+PRs are blocked on quality and security baseline checks.
 
 ---
 
-## Stage 2 — Container CI (Build Artifacts)
+## Stage 2 - Container CI and Artifact Quality
 
-Objective: treat Docker image as a release artifact.
+Objective: treat container images as verified release artifacts.
 
 - [x] Build Docker image in GitHub Actions
-- [x] Push image to GHCR (sha + main tags)
-- [x] Semantic versioning (vX.Y.Z)
-- [x] Multi-environment tagging (dev/prod)
-- [x] Smoke test in CI (container boots + /health)
-- [x] Security scan in CI (Trivy fs + config)
-- [x] CI Postgres service for smoke (CI-only credentials)
+- [x] Immutable image tag pattern (`sha-<short_sha>`)
+- [x] Trivy filesystem and config scans
+- [x] Docker smoke test against `/health`
+- [x] Build and push to DEV ACR on push to `main`
+- [x] Verify pushed image digest in ACR
+- [x] CI summary with image tag/ref/digest for CD handoff
+- [x] Deprecated old GHCR deploy-source flow (ACR is deployment source)
 
 Outcome:
-Every merge to main produces a versioned container image with quality + security gates.
+Each push to `main` produces a validated image and deployment metadata.
 
 ---
 
-## Stage 3 — Cloud Deployment (Azure) — Fast Path
+## Stage 3 - Azure Runtime Platform (Container Apps)
 
-Objective: deploy containerized service to Azure quickly (prove cloud deployment end-to-end).
+Objective: run the service in Azure with secure identity-based access.
 
-### 3.1 Azure prep
-
-- [x] Create Azure subscription setup notes (resource naming, region, budget alert)
-- [x] Create a Resource Group for the project (manual is OK for Stage 3 fast path)
-- [x] Decide environment naming: dev = main branch deployments, prod = release tag deployments
-
-### 3.2 Azure Container Registry (ACR)
-
-- [x] Create ACR (SKU: Basic)
-- [x] Enable admin user: OFF (avoid username/password)
-- [x] Confirm ACR login server name (e.g. xxx.azurecr.io)
-
-### 3.3 Container Apps (initial target)
-
-- [x] Create Container Apps Environment (Log Analytics workspace auto-created or explicit)
-- [x] Create task-api-dev Container App (initial deployment can be from GHCR just to validate platform)
-- [x] Configure ingress (external), target port = app port (e.g. 3000)
-- [x] Configure environment variables for app: NODE_ENV=production, DB settings (temporary, dev only), LOG_LEVEL=info
-- [x] Verify endpoints: /health returns 200, basic API endpoint returns expected response
-
-### 3.4 CI deploy to Azure (dev)
-
-- [x] Add GitHub Actions workflow step: Azure login via OIDC (no secrets)
-- [x] Push image to ACR from GitHub Actions (main branch only)
-- [x] Update Container App image to the new ACR image (main branch only)
-- [x] Validate “merge to main → ACR image → Container App updated”
-
-### 3.5 Managed identity / secure registry access
-
-- [x] Configure Container App identity (system-assigned)
-- [x] Grant identity AcrPull role on ACR
-- [x] Ensure Container App pulls from ACR without credentials
+- [x] Azure Container Apps target selected and running
+- [x] Container Apps Environment and Log Analytics baseline
+- [x] Managed identity on Container App
+- [x] `AcrPull` role assignment for runtime identity
+- [x] Key Vault integration pattern introduced
+- [x] `Key Vault Secrets User` role assignment for runtime identity
+- [x] Health endpoints used as deployment/runtime checks
 
 Outcome:
-Cloud-hosted API running on Azure Container Apps, updated from CI-built image, with secure registry access.
+Application runs on Azure Container Apps with managed identity and role-based access.
 
 ---
 
-## Stage 4 — Infrastructure as Code (Terraform) — Foundation
+## Stage 4 - Terraform Foundation (Reproducible Infra)
 
-Objective: provision Azure infrastructure programmatically (reproducible setup).
+Objective: provision and evolve infra from code, not manual clicks.
 
-### 4.1 Terraform project structure
-
-- [x] Create terraform/ layout: terraform/README.md, terraform/environments/dev/, terraform/environments/prod/, terraform/modules/ (optional later)
-- [x] Add .gitignore for .terraform/, *.tfstate*
-
-### 4.2 Remote Terraform state (Azure Storage)
-
-- [x] Create Storage Account + Container for remote state
-- [x] Configure Terraform backend (azurerm) for dev
-- [x] Repeat/parameterize for prod
-- [x] Document “how to init/apply” in terraform/README.md
-
-### 4.3 Core resources (IaC)
-
-- [ ] Resource Group
-- [ ] Azure Container Registry (ACR)
-- [ ] Container Apps Environment (+ Log Analytics)
-- [ ] (Optional now / required later) VNet + Subnet baseline: VNet, Subnet; decide if needed for Container Apps now; keep for AKS stage
-
-### 4.4 Outputs + naming
-
-- [ ] Output ACR login server
-- [ ] Output Container App name(s) / FQDN
-- [ ] Standardize tags (owner, env, project)
+- [x] Single Terraform root stack (`terraform/`)
+- [x] Remote backend split by environment (`backend/dev.hcl`, `backend/prod.hcl`)
+- [x] Environment tfvars split (`vars/dev.tfvars`, `vars/prod.tfvars`)
+- [x] Core resources managed in Terraform:
+  - Resource Group
+  - ACR
+  - Container App
+  - Log Analytics Workspace
+  - Shared-or-dedicated CAE model
+  - Shared-or-dedicated Key Vault model
+- [x] Infra outputs for deployment and visibility
+- [x] Standardized tags by project/environment
+- [x] Deprecated old `terraform/environments/*` stack layout
+- [ ] Optional modules refactor for larger scale reuse
 
 Outcome:
-Azure infrastructure for dev/prod can be recreated reliably via Terraform with remote state.
+Dev/prod infrastructure is reproducible and versioned with Terraform.
 
 ---
 
-## Stage 5 — CI/CD to Azure (ACR + Container Apps) — Production-Style
+## Stage 5 - Delivery Workflow (CI/CD + Promotion)
 
-Objective: make cloud deployment fully automated and environment-aware.
+Objective: make deployments predictable, auditable, and environment-aware.
 
-### 5.1 CI: image promotion rules
-
-- [ ] Define tagging rules: main → deploy to dev, vX.Y.Z tag → deploy to prod
-- [ ] Ensure GHCR remains “build artifact history” (optional), but ACR becomes “deployment source”
-
-### 5.2 GitHub Actions: Azure auth (OIDC)
-
-- [ ] Create Azure App Registration / Federated Credential for GitHub OIDC
-- [ ] Assign minimum roles required (ACR push + Container Apps update)
-- [ ] Remove any legacy Azure secrets if used
-
-### 5.3 Deploy logic
-
-- [ ] main pipeline: Build → security → smoke → push to ACR → update task-api-dev
-- [ ] tag vX.Y.Z pipeline: Build → security → smoke → push to ACR → update task-api-prod
-- [ ] Add “deployment summary” step (print URLs, image tags)
+- [x] CI split to reduce skipped-job noise:
+  - PR workflow: `.github/workflows/ci.yml`
+  - Push workflow: `.github/workflows/ci-push.yml`
+- [x] Manual CD workflow (`.github/workflows/cd.yml`) with:
+  - `environment` input (`dev|prod`)
+  - `action` input (`plan|apply|destroy`)
+  - `image_tag` validation for plan/apply
+- [x] Terraform-driven deploy path for dev and prod
+- [x] PROD digest promotion from DEV ACR before Terraform plan/apply
+- [x] CD summary for execution context and selected backend/tfvars
+- [x] Post-refactor runbook + prereq checker script added
+- [x] Deprecated old tag-driven direct prod deployment flow
+- [ ] Environment protection rules review (required reviewers, prod safeguards)
+- [ ] Policy decision: keep or restrict `prod destroy` path
 
 Outcome:
-Hands-off deployments: main updates dev, release tags update prod, using OIDC + managed identity.
+Deployments are controlled, traceable, and safer across environments.
 
 ---
 
-## Stage 6 — Python Service (Company Stack Alignment)
+## Stage 6 - Python Service (Stack Expansion)
 
-Objective: align with Python-based backend stack and introduce a second service safely.
+Objective: add a second service to practice multi-service operations.
 
-### 6.1 Add FastAPI microservice
-
-- [ ] Create python-service/ (FastAPI skeleton)
-- [ ] Add /health endpoint
-- [ ] Add one simple “compute” endpoint (e.g. /v1/score) to demonstrate real work
-- [ ] Add minimal tests (pytest)
-
-### 6.2 Dockerize Python service
-
-- [ ] Add python-service/Dockerfile (non-root, small image)
-- [ ] Add .dockerignore
-
-### 6.3 docker-compose: run Node + Python locally
-
-- [ ] Extend docker-compose.yml: Node API, Python service, Postgres
-- [ ] Add service discovery (Node calls Python by service name)
-- [ ] Document local run instructions
-
-### 6.4 CI job for Python (lint + tests)
-
-- [ ] Add Python linting (ruff/flake8) + formatting
-- [ ] Add pytest in CI
-- [ ] Add coverage for python-service
-
-### 6.5 Inter-service communication (Node → Python)
-
-- [ ] Add a Node endpoint that calls Python service
-- [ ] Add integration test verifying Node↔Python flow
-- [ ] Add retries/timeouts for HTTP calls
-- [ ] Add basic error handling + logs
+- [ ] Create `python-service/` (FastAPI)
+- [ ] Add `/health` and one business endpoint
+- [ ] Add pytest + coverage
+- [ ] Dockerize Python service
+- [ ] Extend compose to run Node + Python + Postgres
+- [ ] Add CI checks for Python (lint/test)
+- [ ] Add Node -> Python integration path with retries/timeouts
 
 Outcome:
-Multi-service architecture (Node + Python) with local compose + CI gates.
+Multi-service architecture with service-to-service communication and CI quality gates.
 
 ---
 
-## Stage 7 — Kubernetes (AKS)
+## Stage 7 - Kubernetes Runtime (AKS)
 
-Objective: move from single-container deployment to orchestration (real platform skills).
+Objective: learn orchestration and deployment control beyond single app runtime.
 
-### 7.1 Kubernetes manifests (baseline)
-
-- [ ] Create k8s/ folder: deployment.yaml, service.yaml
-- [ ] Deployment for Node API
-- [ ] Service (ClusterIP)
-
-### 7.2 Probes
-
-- [ ] Readiness probe (/health)
-- [ ] Liveness probe (/health or dedicated /live)
-
-### 7.3 Resource limits & requests
-
-- [ ] Define CPU/memory requests
-- [ ] Define CPU/memory limits
-
-### 7.4 Ingress controller
-
-- [ ] Install/define ingress (NGINX or AGIC later)
-- [ ] Ingress resource routing to service
-
-### 7.5 Horizontal Pod Autoscaler (HPA)
-
-- [ ] Enable metrics server (if needed)
-- [ ] Add HPA based on CPU utilization
+- [ ] Add Kubernetes manifests (`k8s/`)
+- [ ] Configure liveness/readiness probes
+- [ ] Define requests/limits
+- [ ] Add ingress routing
+- [ ] Add autoscaling baseline (HPA)
 
 Outcome:
-Production-style container orchestration with scaling, routing, and health management.
+Service becomes operable in Kubernetes with health and scaling controls.
 
 ---
 
-## Stage 8 — Infrastructure as Code (Terraform) — AKS Expansion
+## Stage 8 - Terraform Expansion for AKS
 
-Objective: provision Kubernetes infrastructure cleanly (AKS + networking).
+Objective: manage Kubernetes infrastructure through Terraform.
 
-This stage extends Stage 4 Terraform to cover AKS.
-
-- [ ] VNet + Subnet (AKS-ready)
-- [ ] Network decisions documented: kubenet vs Azure CNI (choose one, explain why)
-- [ ] Azure Kubernetes Service (AKS)
-- [ ] Attach ACR to AKS (AcrPull)
-- [ ] Remote Terraform state already in place (reuse)
+- [ ] Add VNet/Subnet baseline for AKS
+- [ ] Provision AKS via Terraform
+- [ ] Attach ACR pull permissions to AKS identity
+- [ ] Document network model decision (kubenet vs Azure CNI)
 
 Outcome:
-AKS infrastructure fully reproducible and integrated with ACR and networking.
+AKS platform is reproducible through Terraform with explicit network/security decisions.
 
 ---
 
-## Stage 9 — Security & Identity (Azure Entra ID)
+## Stage 9 - Security and Identity Maturity
 
-Objective: enterprise-grade identity integration.
+Objective: move from baseline security to production-grade identity model.
 
-- [ ] Azure Entra ID integration (AKS/Apps depending on target)
-- [ ] Service-to-service authentication: managed identity where possible, token-based auth between services (if required)
-- [ ] Secret management strategy: Azure Key Vault plan, Kubernetes Secrets baseline (then move to CSI driver)
-- [ ] RBAC configuration: principle of least privilege, separate roles for CI vs humans vs runtime
+- [x] OIDC authentication from GitHub Actions to Azure
+- [x] Managed identity + RBAC pattern for runtime services
+- [x] Key Vault integration baseline introduced
+- [ ] Secret rotation runbook and ownership model
+- [ ] Access review cadence for CI/runtime/human identities
+- [ ] Add stronger policy checks (least privilege verification)
 
 Outcome:
-Enterprise-ready authentication, authorization, and secrets strategy.
+Identity and secret management become auditable and operationally maintainable.
 
 ---
 
-## Stage 10 — Observability & Production Thinking
+## Stage 10 - Observability and Operations
 
-Objective: simulate real production environment concerns.
+Objective: build production-thinking habits (monitoring, resilience, incident response).
 
-### 10.1 Structured logs in cloud
-
-- [ ] Ensure JSON logs (already in app) are viewable in Azure logs
-- [ ] Add correlation id (request id) middleware
-- [ ] Log redaction rules (no secrets)
-
-### 10.2 Health metrics
-
-- [ ] Add /metrics endpoint (optional now; Prometheus later)
-- [ ] Track basic counters (requests, errors, latency)
-
-### 10.3 Monitoring
-
-- [ ] Azure Monitor / Log Analytics dashboards
-- [ ] Alerts: CPU high, restarts/crashes, 5xx rate, latency threshold
-
-### 10.4 Failure simulation & recovery testing
-
-- [ ] Simulate DB down (expected behavior documented)
-- [ ] Simulate app crash loop (observe restart behavior)
-- [ ] Simulate slow dependency (timeouts, retries)
-
-### 10.5 Rolling updates strategy
-
-- [ ] Rolling update settings validated
-- [ ] Can deploy without downtime (prove with logs)
+- [x] Structured application logs in app code (Pino)
+- [ ] Cloud log dashboards for key signals
+- [ ] Alert rules for health, errors, and saturation
+- [ ] Basic incident drills (DB down, dependency timeout, bad deploy)
+- [ ] Post-incident notes template and recovery checklist
 
 Outcome:
-Operationally resilient service with monitoring, alerting, and controlled releases.
+Service reliability is measured and failures are handled with repeatable process.
+
+---
+
+## Junior Readiness Exit Criteria (2-Month Target)
+
+You are "junior-ready" for this stack when you can consistently do the following:
+
+- [ ] Explain and operate both CI workflows (PR and push) and when each should fail.
+- [ ] Run CD safely (`plan` before `apply`) and recover from a failed deploy.
+- [ ] Trace one image from commit SHA to running environment by digest.
+- [ ] Manage Terraform backend/tfvars per environment without state confusion.
+- [ ] Validate Key Vault + RBAC prerequisites before deployment.
+- [ ] Demonstrate one end-to-end release in a short screen-share:
+  - commit -> PR checks -> merge -> CI Push artifact -> CD apply -> health checks
+- [ ] Provide portfolio evidence:
+  - links to successful workflow runs
+  - sample Terraform plan/apply outputs
+  - short incident/recovery notes

@@ -32,3 +32,18 @@ output "key_vault_name" {
   description = "Key Vault name in use."
   value       = local.key_vault_name
 }
+
+output "postgres_server_name" {
+  description = "PostgreSQL flexible server name."
+  value       = azurerm_postgresql_flexible_server.main.name
+}
+
+output "postgres_fqdn" {
+  description = "PostgreSQL flexible server hostname."
+  value       = azurerm_postgresql_flexible_server.main.fqdn
+}
+
+output "postgres_database_name" {
+  description = "Application database name."
+  value       = azurerm_postgresql_flexible_server_database.main.name
+}

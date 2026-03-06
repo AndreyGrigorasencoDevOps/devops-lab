@@ -106,6 +106,48 @@ variable "container_memory" {
   default     = "1Gi"
 }
 
+variable "postgres_server_version" {
+  type        = string
+  description = "PostgreSQL flexible server major version."
+  default     = "16"
+}
+
+variable "postgres_sku_name" {
+  type        = string
+  description = "SKU for PostgreSQL flexible server."
+  default     = "B_Standard_B1ms"
+}
+
+variable "postgres_storage_mb" {
+  type        = number
+  description = "Storage size for PostgreSQL flexible server in MB."
+  default     = 32768
+}
+
+variable "postgres_backup_retention_days" {
+  type        = number
+  description = "Backup retention window for PostgreSQL flexible server."
+  default     = 7
+}
+
+variable "postgres_public_network_access_enabled" {
+  type        = bool
+  description = "Enable public access for PostgreSQL flexible server."
+  default     = true
+}
+
+variable "postgres_admin_username" {
+  type        = string
+  description = "Administrator username for PostgreSQL flexible server."
+  default     = "taskapipg"
+}
+
+variable "postgres_database_name" {
+  type        = string
+  description = "Application database name in PostgreSQL."
+  default     = "taskdb"
+}
+
 variable "app_env_vars" {
   type        = map(string)
   description = "Non-sensitive environment variables passed to Container App."
