@@ -19,3 +19,5 @@ provider "azurerm" {
   features {}
   resource_provider_registrations = "extended"
 }
+
+data "azurerm_client_config" "current" {}

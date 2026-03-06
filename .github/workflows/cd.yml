@@ -1,0 +1,338 @@
+name: CD
+run-name: CD | env=${{ inputs.environment }} | tf=${{ inputs.action }} | image=${{ inputs.image_tag || 'n/a' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+      action:
+        description: "Terraform action"
+        required: true
+        type: choice
+        default: plan
+        options:
+          - plan
+          - apply
+          - destroy
+      image_tag:
+        description: "Immutable image tag from CI (example: sha-abc1234). Required for plan/apply."
+        required: false
+        type: string
+
+concurrency:
+  group: cd-${{ inputs.environment }}-${{ inputs.action }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: task-api
+  TERRAFORM_DIR: terraform
+
+jobs:
+  validate-inputs:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validate image_tag requirements
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.action }}" != "destroy" && -z "${{ inputs.image_tag }}" ]]; then
+            echo "::error::image_tag is required for action '${{ inputs.action }}'."
+            exit 1
+          fi
+
+      - name: Publish CD execution summary
+        run: |
+          set -euo pipefail
+          VAR_FILE="vars/dev.tfvars"
+          BACKEND_FILE="backend/dev.hcl"
+          if [[ "${{ inputs.environment }}" == "prod" ]]; then
+            VAR_FILE="vars/prod.tfvars"
+            BACKEND_FILE="backend/prod.hcl"
+          fi
+
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          if [[ -z "$IMAGE_TAG" ]]; then
+            IMAGE_TAG="n/a"
+          fi
+
+          echo "## CD Execution Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Parameter | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Terraform action | \`${{ inputs.action }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image tag | \`$IMAGE_TAG\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Backend config | \`$BACKEND_FILE\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Var file | \`$VAR_FILE\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ inputs.environment }}" == "prod" && "${{ inputs.action }}" != "destroy" ]]; then
+            echo "This run will promote image by digest from DEV ACR to PROD ACR before Terraform." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  resolve-prod-source:
+    name: Resolve source image in DEV ACR
+    if: inputs.environment == 'prod' && inputs.action != 'destroy'
+    needs: [validate-inputs]
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      source_digest: ${{ steps.resolve.outputs.digest }}
+      source_image: ${{ steps.resolve.outputs.source_image }}
+    steps:
+      - name: Azure login (OIDC, DEV)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve digest from DEV ACR
+        id: resolve
+        run: |
+          set -euo pipefail
+          DIGEST=$(az acr manifest show-metadata \
+            --registry "${{ vars.ACR_NAME }}" \
+            --name "${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" \
+            --query digest -o tsv)
+
+          if [[ -z "$DIGEST" ]]; then
+            echo "::error::Image '${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}' was not found in DEV ACR."
+            exit 1
+          fi
+
+          SOURCE_IMAGE="${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "source_image=$SOURCE_IMAGE" >> "$GITHUB_OUTPUT"
+
+  promote-prod-image:
+    name: Promote image to PROD ACR
+    if: inputs.environment == 'prod' && inputs.action != 'destroy'
+    needs: [resolve-prod-source]
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Azure login (OIDC, PROD)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Import image by digest into PROD ACR
+        run: |
+          set -euo pipefail
+          az acr import \
+            --name "${{ vars.ACR_NAME }}" \
+            --source "${{ needs.resolve-prod-source.outputs.source_image }}" \
+            --image "${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" \
+            --force
+
+      - name: Verify promoted digest
+        run: |
+          set -euo pipefail
+          PROD_DIGEST=$(az acr manifest show-metadata \
+            --registry "${{ vars.ACR_NAME }}" \
+            --name "${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" \
+            --query digest -o tsv)
+
+          if [[ -z "$PROD_DIGEST" ]]; then
+            echo "::error::Image '${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}' was not found in PROD ACR."
+            exit 1
+          fi
+
+          if [[ "$PROD_DIGEST" != "${{ needs.resolve-prod-source.outputs.source_digest }}" ]]; then
+            echo "::error::Digest mismatch after promotion. Expected '${{ needs.resolve-prod-source.outputs.source_digest }}', got '$PROD_DIGEST'."
+            exit 1
+          fi
+
+  terraform-dev:
+    name: Terraform dev
+    if: inputs.environment == 'dev'
+    needs: [validate-inputs]
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
+      APP_SECRETS_JSON: ${{ secrets.TF_APP_SECRETS_JSON }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Export Terraform variables
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.action }}" != "destroy" ]]; then
+            echo "TF_VAR_container_image_tag=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+          fi
+
+          if [[ -n "$APP_ENV_VARS_JSON" ]]; then
+            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
+          fi
+
+          if [[ -n "$APP_SECRETS_JSON" ]]; then
+            echo "TF_VAR_app_secrets=$APP_SECRETS_JSON" >> "$GITHUB_ENV"
+          fi
+
+      - name: Terraform init
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
+
+      - name: Terraform plan/apply/destroy (dev)
+        run: |
+          set -euo pipefail
+          case "${{ inputs.action }}" in
+            plan)
+              terraform -chdir=${{ env.TERRAFORM_DIR }} plan -var-file=vars/dev.tfvars
+              ;;
+            apply)
+              terraform -chdir=${{ env.TERRAFORM_DIR }} plan -var-file=vars/dev.tfvars -out=tfplan
+              terraform -chdir=${{ env.TERRAFORM_DIR }} apply -auto-approve tfplan
+              ;;
+            destroy)
+              terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/dev.tfvars -auto-approve
+              ;;
+            *)
+              echo "::error::Unsupported action '${{ inputs.action }}'."
+              exit 1
+              ;;
+          esac
+
+  terraform-prod:
+    name: Terraform prod (plan/apply)
+    if: inputs.environment == 'prod' && inputs.action != 'destroy'
+    needs: [validate-inputs, promote-prod-image]
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
+      APP_SECRETS_JSON: ${{ secrets.TF_APP_SECRETS_JSON }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Export Terraform variables
+        run: |
+          set -euo pipefail
+          echo "TF_VAR_container_image_tag=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+
+          if [[ -n "$APP_ENV_VARS_JSON" ]]; then
+            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
+          fi
+
+          if [[ -n "$APP_SECRETS_JSON" ]]; then
+            echo "TF_VAR_app_secrets=$APP_SECRETS_JSON" >> "$GITHUB_ENV"
+          fi
+
+      - name: Terraform init
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
+
+      - name: Terraform plan/apply (prod)
+        run: |
+          set -euo pipefail
+          case "${{ inputs.action }}" in
+            plan)
+              terraform -chdir=${{ env.TERRAFORM_DIR }} plan -var-file=vars/prod.tfvars
+              ;;
+            apply)
+              terraform -chdir=${{ env.TERRAFORM_DIR }} plan -var-file=vars/prod.tfvars -out=tfplan
+              terraform -chdir=${{ env.TERRAFORM_DIR }} apply -auto-approve tfplan
+              ;;
+            *)
+              echo "::error::Unsupported action '${{ inputs.action }}' for this job."
+              exit 1
+              ;;
+          esac
+
+  terraform-prod-destroy:
+    name: Terraform prod (destroy)
+    if: inputs.environment == 'prod' && inputs.action == 'destroy'
+    needs: [validate-inputs]
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
+      APP_SECRETS_JSON: ${{ secrets.TF_APP_SECRETS_JSON }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Export Terraform variables
+        run: |
+          set -euo pipefail
+          if [[ -n "$APP_ENV_VARS_JSON" ]]; then
+            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
+          fi
+
+          if [[ -n "$APP_SECRETS_JSON" ]]; then
+            echo "TF_VAR_app_secrets=$APP_SECRETS_JSON" >> "$GITHUB_ENV"
+          fi
+
+      - name: Terraform init
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
+
+      - name: Terraform destroy (prod)
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/prod.tfvars -auto-approve
