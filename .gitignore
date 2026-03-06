@@ -30,3 +30,5 @@ LINUX_COMMANDS.md
 crash.log
 terraform.md
 azure.md
+!docs/terraform.md
+!docs/azure.md

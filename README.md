@@ -1,6 +1,30 @@
-﻿# devops-lab
+# devops-lab
 
-Node.js (Express) Task API used as a DevOps playground.
+Node.js (Express) Task API used as a DevOps learning project.
+
+## Start Here
+
+- Main learning path: [Roadmap](./docs/ROADMAP.md)
+- Current operational checklist: [Post-refactor runbook](./docs/post-refactor-runbook.md)
+
+## Current Platform Snapshot (as of March 2026)
+
+- CI is split by event to reduce noise:
+  - PR checks: `.github/workflows/ci.yml` (pull_request only)
+  - Push checks: `.github/workflows/ci-push.yml` (push to `main` only)
+- Sonar is enabled in quality jobs for both PR and push workflows (token-gated and fork-safe).
+- CD is manual only via `.github/workflows/cd.yml` (`workflow_dispatch` with `environment`, `action`, `image_tag`).
+- Terraform uses one shared root stack (`terraform/`) with:
+  - env-specific backend files (`backend/dev.hcl`, `backend/prod.hcl`)
+  - env-specific tfvars (`vars/dev.tfvars`, `vars/prod.tfvars`)
+- Prod deployment promotes image by digest from DEV ACR to PROD ACR before Terraform apply.
+
+## Documentation Map
+
+- Learning roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md)
+- Post-refactor operations: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)
+- Terraform usage: [terraform/README.md](./terraform/README.md)
+- Cloud architecture: [docs/cloud-architecture.md](./docs/cloud-architecture.md)
 
 ## Stack
 
@@ -11,14 +35,14 @@ Node.js (Express) Task API used as a DevOps playground.
 - GitHub Actions (CI + CD)
 - Terraform (Azure)
 
-## API overview
+## API Overview
 
 - `GET /health`
 - `GET /ready`
 - `GET /info`
 - CRUD endpoints under `/tasks`
 
-## Local run
+## Local Run
 
 ```bash
 npm install
@@ -33,47 +57,69 @@ App default URL: `http://localhost:3000`
 docker compose up --build
 ```
 
-## Project structure
+## Project Structure
 
 ```text
 .
 +-- src/
 +-- test/
++-- scripts/
+|   L-- check-post-refactor-prereqs.sh
++-- docs/
+|   +-- ROADMAP.md
+|   +-- post-refactor-runbook.md
+|   +-- cloud-architecture.md
+|   +-- azure.md
+|   L-- terraform.md
 +-- terraform/
-¦   +-- main.tf
-¦   +-- variables.tf
-¦   +-- outputs.tf
-¦   +-- versions.tf
-¦   +-- backend/
-¦   ¦   +-- dev.hcl
-¦   ¦   L-- prod.hcl
-¦   L-- vars/
-¦       +-- dev.tfvars
-¦       L-- prod.tfvars
+|   +-- main.tf
+|   +-- variables.tf
+|   +-- outputs.tf
+|   +-- versions.tf
+|   +-- backend/
+|   |   +-- dev.hcl
+|   |   L-- prod.hcl
+|   L-- vars/
+|       +-- dev.tfvars
+|       L-- prod.tfvars
 L-- .github/workflows/
     +-- ci.yml
+    +-- ci-push.yml
     L-- cd.yml
 ```
 
-## CI/CD model
+## CI/CD Model
 
-### CI (`.github/workflows/ci.yml`)
+### CI (PR): `.github/workflows/ci.yml`
 
-Triggers:
+Trigger:
 
 - Pull requests to `main`
+
+Jobs:
+
+- Semantic PR title check
+- Dependency review
+- Lint + tests with coverage + Sonar + npm audit
+- Trivy filesystem/config scans
+- Docker smoke test (`/health`)
+- PR summary
+
+### CI Push: `.github/workflows/ci-push.yml`
+
+Trigger:
+
 - Pushes to `main`
 
 Jobs:
 
-- Semantic PR title (PR only)
-- Dependency review (PR only)
-- Lint + tests + coverage + npm audit
+- Lint + tests with coverage + Sonar + npm audit
 - Trivy filesystem/config scans
 - Docker smoke test (`/health`)
-- Build and push immutable image tag `sha-<short_sha>` to DEV ACR (push to `main` only)
+- Build and push immutable image tag `sha-<short_sha>` to DEV ACR
+- Push summary with `image_tag`, `image_ref`, `image_digest`
 
-### CD (`.github/workflows/cd.yml`)
+### CD: `.github/workflows/cd.yml`
 
 Trigger:
 
@@ -87,26 +133,27 @@ Inputs:
 
 Behavior:
 
-- Terraform is the deployment engine for dev/prod.
-- For `prod` + (`plan` or `apply`), image is promoted from DEV ACR to PROD ACR by digest before Terraform.
-- `destroy` is allowed for both environments.
+- Terraform is the deployment engine for both environments.
+- For `prod` plan/apply, the workflow promotes the image from DEV ACR to PROD ACR by digest before Terraform.
+- `destroy` is available for both `dev` and `prod` (manual use only).
 
-## Terraform usage
+## Terraform Quick Start
 
-See [terraform/README.md](./terraform/README.md) for full commands.
-
-Quick examples:
+See [terraform/README.md](./terraform/README.md) for full usage.
 
 ```bash
 terraform -chdir=terraform init -backend-config=backend/dev.hcl -reconfigure
 terraform -chdir=terraform plan -var-file=vars/dev.tfvars -var="container_image_tag=sha-abc1234"
 ```
 
-## GitHub environment variables and secrets
+## GitHub and Azure Configuration
 
-Configure both `dev` and `prod` environments in GitHub:
+### Repository-level Sonar (GitHub repository settings)
 
-Variables:
+- Secret: `SONAR_TOKEN`
+- Variables: `SONAR_PROJECT`, `SONAR_ORG`
+
+### GitHub environment variables (`dev` and `prod`)
 
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
@@ -115,9 +162,17 @@ Variables:
 - `ACR_LOGIN_SERVER`
 - `TF_APP_ENV_VARS_JSON` (optional JSON map)
 
-Secrets:
+### Database wiring contract
 
-- Secrets are managed manually in Azure (no TF secret input).
+Terraform provisions PostgreSQL and injects these required runtime variables automatically:
+
+- `DB_HOST`
+- `DB_PORT`
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME`
+
+Use Key Vault for other application secrets that are not provisioned by Terraform.
 
 ## Scripts
 
@@ -126,4 +181,4 @@ Secrets:
 - `npm run lint`
 - `npm test`
 - `npm run test:coverage`
-
+- `./scripts/check-post-refactor-prereqs.sh`

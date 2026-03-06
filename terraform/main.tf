@@ -10,6 +10,11 @@ locals {
   container_app_environment_id = var.use_shared_cae ? data.azurerm_container_app_environment.shared[0].id : azurerm_container_app_environment.main[0].id
   key_vault_id                 = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].id : azurerm_key_vault.main[0].id
   key_vault_name               = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].name : azurerm_key_vault.main[0].name
+  reserved_app_env_var_names   = toset(["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"])
+  sanitized_app_env_vars = {
+    for key, value in var.app_env_vars : key => value
+    if !contains(local.reserved_app_env_var_names, key)
+  }
 }
 
 moved {
@@ -86,6 +91,11 @@ resource "random_string" "suffix" {
   special = false
 }
 
+resource "random_password" "postgres_admin" {
+  length  = 24
+  special = false
+}
+
 resource "azurerm_container_registry" "main" {
   name                = "${var.project}${var.env}acr${random_string.suffix.result}"
   resource_group_name = azurerm_resource_group.main.name
@@ -93,6 +103,35 @@ resource "azurerm_container_registry" "main" {
   sku                 = "Basic"
   admin_enabled       = false
   tags                = local.tags
+}
+
+resource "azurerm_postgresql_flexible_server" "main" {
+  name                          = "${var.project}-${var.env}-psql-${random_string.suffix.result}"
+  resource_group_name           = azurerm_resource_group.main.name
+  location                      = azurerm_resource_group.main.location
+  version                       = var.postgres_server_version
+  administrator_login           = var.postgres_admin_username
+  administrator_password        = random_password.postgres_admin.result
+  sku_name                      = var.postgres_sku_name
+  storage_mb                    = var.postgres_storage_mb
+  backup_retention_days         = var.postgres_backup_retention_days
+  public_network_access_enabled = var.postgres_public_network_access_enabled
+  tags                          = local.tags
+}
+
+resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure_services" {
+  count            = var.postgres_public_network_access_enabled ? 1 : 0
+  name             = "allow-azure-services"
+  server_id        = azurerm_postgresql_flexible_server.main.id
+  start_ip_address = "0.0.0.0"
+  end_ip_address   = "0.0.0.0"
+}
+
+resource "azurerm_postgresql_flexible_server_database" "main" {
+  name      = var.postgres_database_name
+  server_id = azurerm_postgresql_flexible_server.main.id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
 }
 
 resource "azurerm_container_app" "main" {
@@ -117,8 +156,33 @@ resource "azurerm_container_app" "main" {
       cpu    = var.container_cpu
       memory = var.container_memory
 
+      env {
+        name  = "DB_HOST"
+        value = azurerm_postgresql_flexible_server.main.fqdn
+      }
+
+      env {
+        name  = "DB_PORT"
+        value = "5432"
+      }
+
+      env {
+        name  = "DB_USER"
+        value = azurerm_postgresql_flexible_server.main.administrator_login
+      }
+
+      env {
+        name  = "DB_PASSWORD"
+        value = random_password.postgres_admin.result
+      }
+
+      env {
+        name  = "DB_NAME"
+        value = azurerm_postgresql_flexible_server_database.main.name
+      }
+
       dynamic "env" {
-        for_each = var.app_env_vars
+        for_each = local.sanitized_app_env_vars
         iterator = app_env
         content {
           name  = app_env.key

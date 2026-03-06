@@ -1,181 +1,151 @@
-# Cloud Architecture – Task API Platform (Azure)
+# Cloud Architecture - Task API Platform (Azure)
 
-> This document describes the cloud architecture for the **Task API Production Platform** deployed in Microsoft Azure.
+This document describes the current cloud architecture and near-term evolution path.
 
 ---
 
 ## Table of Contents
 
 - [1. Overview](#1-overview)
-- [2. Subscription & Tenant](#2-subscription--tenant)
-- [3. Environments & Deployment Strategy](#3-environments--deployment-strategy)
+- [2. Subscription and Tenant Model](#2-subscription-and-tenant-model)
+- [3. Environments and Deployment Strategy](#3-environments-and-deployment-strategy)
 - [4. Naming Convention](#4-naming-convention)
-- [5. High-Level Architecture](#5-high-level-architecture)
-- [6. Planned Resource Layout](#6-planned-resource-layout-stage-3--stage-4)
-- [7. Security Principles](#7-security-principles)
-- [8. Monitoring & Observability](#8-monitoring--observability-future)
-- [9. Future Evolution](#9-future-evolution)
+- [5. Current Architecture (March 2026)](#5-current-architecture-march-2026)
+- [6. Security Baseline](#6-security-baseline)
+- [7. Operations Baseline](#7-operations-baseline)
+- [8. Future Evolution](#8-future-evolution)
 
 ---
 
 ## 1. Overview
 
-The platform is designed to evolve from **manual CLI deployments** (Stage 3) to:
+The platform currently runs on Azure Container Apps and is managed by GitHub Actions + Terraform.
 
-- **Fully automated Infrastructure-as-Code** using Terraform  
-- **CI/CD** via GitHub Actions  
-- **Kubernetes-based** production workloads  
+Current delivery model:
 
-| Property        | Value   |
-|----------------|---------|
-| **Primary region** | `uksouth` (UK South) |
+- PR validation (`ci.yml`)
+- Push artifact build (`ci-push.yml`)
+- Manual CD (`cd.yml`) using Terraform plan/apply/destroy
 
 ---
 
-## 2. Subscription & Tenant
+## 2. Subscription and Tenant Model
 
-| Property            | Value                                      |
-|---------------------|--------------------------------------------|
-| Subscription Name   | Azure subscription 1                       |
-| Subscription ID     | `beccabf7-91a3-4c7a-9650-61bfb916ffa8`     |
-| Tenant ID           | `0435e23c-d8f9-48f2-9c78-ec5d81c1aec7`     |
-| Type                | Free Trial                                 |
-| Default Region      | `uksouth`                                  |
+Use placeholders in docs and scripts. Do not commit environment-specific secret values.
 
-> **Security note:** Subscription ID and Tenant ID are safe to store in Git.  
-> **Never** commit secrets (client secrets, connection strings, passwords, tokens).
+| Property | Example Placeholder |
+| --- | --- |
+| Subscription ID | `<azure_subscription_id>` |
+| Tenant ID | `<azure_tenant_id>` |
+| Region | `uksouth` |
+
+Security rule:
+
+- Never commit client secrets, passwords, tokens, or connection strings.
 
 ---
 
-## 3. Environments & Deployment Strategy
+## 3. Environments and Deployment Strategy
 
-### Environments
+| Environment | Trigger Source | Deployment Mode |
+| --- | --- | --- |
+| `dev` | Push to `main` creates image artifact | Manual CD (`plan/apply`) |
+| `prod` | Manual CD with selected immutable image tag | Digest promotion + Terraform |
 
-| Environment | Source           | Purpose                              |
-|-------------|------------------|--------------------------------------|
-| `dev`       | `main` branch    | Fast iteration & manual testing      |
-| `prod`      | Git release tags | Stable, controlled deployments       |
+Key point:
 
-### Planned behaviour
-
-- **dev** → auto deploy on push  
-- **prod** → deploy via release pipeline + Terraform  
+- Prod image is promoted from DEV ACR by digest before Terraform apply.
 
 ---
 
 ## 4. Naming Convention
 
-### Standard resource format
+Primary pattern:
 
-```
-taskapi-<env>-<resource>-<regionCode>
-```
-
-**Examples:**
-
-| Resource   | Name                    |
-|-----------|--------------------------|
-| RG        | `taskapi-dev-rg-uks`     |
-| VNet      | `taskapi-dev-vnet-uks`   |
-| NSG       | `taskapi-dev-nsg-uks`    |
-| Log Analytics | `taskapi-dev-law-uks` |
-| Prod RG   | `taskapi-prod-rg-uks`    |
-
-### Resource codes
-
-| Code | Resource                 |
-|------|--------------------------|
-| `rg` | Resource Group           |
-| `vnet` | Virtual Network        |
-| `snet` | Subnet                 |
-| `nsg` | Network Security Group   |
-| `acr` | Azure Container Registry |
-| `aks` | Azure Kubernetes Service |
-| `law` | Log Analytics Workspace  |
-| `kv`  | Key Vault                |
-
-### Special naming constraints
-
-Some Azure resources have **global** naming constraints:
-
-| Resource   | Constraint                          | Example           |
-|------------|-------------------------------------|-------------------|
-| **ACR**    | Globally unique, lowercase, no dashes | `taskapidevacruks` |
-| **Key Vault** | Globally unique, strict naming rules | May require adjusted pattern |
-
----
-
-## 5. High-Level Architecture
-
-```
-                    Internet
-                        │
-                        ▼
-                Azure Load Balancer
-                        │
-                        ▼
-                     AKS Cluster
-                 (Kubernetes Pods)
-                        │
-            ┌───────────┴───────────┐
-            ▼                       ▼
-          ACR                  Azure Key Vault
-   (Container Registry)       (Secrets storage)
-            │
-            ▼
-   GitHub Actions (CI/CD)
-            │
-            ▼
-        Terraform (IaC)
+```text
+taskapi-<env>-<resource>-uks
 ```
 
----
+Examples:
 
-## 6. Planned Resource Layout (Stage 3 → Stage 4)
+- `taskapi-dev-rg-uks`
+- `taskapi-prod-rg-uks`
+- `taskapi-dev-cae-uks`
+- `taskapi-shared-kv-uks`
 
-### Core infrastructure
+Notes:
 
-- **Resource Group**
-- **Virtual Network**
-- **Subnet** (for AKS)
-- **Network Security Group**
-- **Azure Container Registry**
-- **Azure Kubernetes Service**
-- **Log Analytics Workspace**
-- **Key Vault** (later stage)
+- ACR names must be globally unique and lowercase.
+- Key Vault names are globally unique and must follow Azure naming rules.
 
 ---
 
-## 7. Security Principles
+## 5. Current Architecture (March 2026)
 
-- **No secrets stored in Git**
-- Use:
-  - **Azure Managed Identity** (later)
-  - **Key Vault** for secrets
-  - **GitHub Secrets** for CI
-- **RBAC-based** access control
-- **Principle of least privilege**
-- **Separate environments** for dev and prod
+```text
+GitHub Actions (CI + CI Push + CD manual)
+            |
+            v
+      Azure Container Registry (DEV/PROD)
+            |
+            v
+  Azure Container Apps (dev/prod runtime)
+            |
+            v
+      Azure Key Vault (shared pattern)
+            ^
+            |
+         Terraform
+```
+
+Managed by Terraform:
+
+- Resource Group
+- Log Analytics Workspace
+- Container Apps Environment (shared or dedicated)
+- Azure Container Registry
+- Azure Container App
+- Key Vault (shared or dedicated mode)
+- RBAC assignments (`AcrPull`, `Key Vault Secrets User`)
 
 ---
 
-## 8. Monitoring & Observability (Future)
+## 6. Security Baseline
 
-- **Log Analytics Workspace**
-- **Container Insights**
-- **AKS metrics**
-- **Application logs** (pino → stdout → Azure Monitor)
+- GitHub -> Azure auth via OIDC (no long-lived cloud credentials in repo).
+- Runtime access via Managed Identity.
+- Key Vault used for secret management contract.
+- Principle of least privilege enforced through RBAC assignments.
+
+Secret naming contract currently documented as:
+
+- `DB_HOST`
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME`
 
 ---
 
-## 9. Future Evolution
+## 7. Operations Baseline
 
-This architecture will evolve to include:
+- Health endpoints:
+  - `GET /health` (liveness)
+  - `GET /ready` (readiness)
+- CI/CD runbooks:
+  - `docs/post-refactor-runbook.md`
+  - `scripts/check-post-refactor-prereqs.sh`
+- Terraform operation guide:
+  - `terraform/README.md`
 
-- Terraform modules
-- Remote state backend
-- Environment separation via `tfvars`
-- Horizontal Pod Autoscaler
-- Ingress Controller
-- Canary deployments
-- Zero-downtime rolling updates
+---
+
+## 8. Future Evolution
+
+Planned next evolution layers:
+
+- Multi-service architecture (Node + Python service)
+- Kubernetes runtime track (AKS) as a future stage
+- Expanded observability (dashboards, alerts, incident drills)
+- Stronger policy guardrails for prod change management
+
+AKS is a future target, not the current production runtime for this repository.

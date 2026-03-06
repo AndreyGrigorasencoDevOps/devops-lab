@@ -1,11 +1,11 @@
-name: CI
+name: CI Push
 
 on:
-  pull_request:
+  push:
     branches: ["main"]
 
 concurrency:
-  group: ci-pr-${{ github.event.pull_request.number }}
+  group: ci-push-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -15,44 +15,6 @@ env:
   SMOKE_HEALTH_PATH: /health
 
 jobs:
-  pr-title:
-    name: Validate PR title
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-    steps:
-      - name: Check semantic PR title
-        uses: amannn/action-semantic-pull-request@v5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          types: |
-            feat
-            fix
-            docs
-            ci
-            chore
-            refactor
-            test
-            build
-            perf
-            revert
-          requireScope: false
-
-  dependency-review:
-    name: Dependency review
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
-
   quality:
     name: Lint, tests, Sonar, audit
     runs-on: ubuntu-latest
@@ -195,27 +157,101 @@ jobs:
           docker logs "$cid"
           exit 1
 
+  build-push-dev-acr:
+    name: Build and push image to DEV ACR
+    needs: [quality, trivy, smoke]
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      image_tag: ${{ steps.tag.outputs.value }}
+      image_ref: ${{ steps.image.outputs.ref }}
+      image_digest: ${{ steps.verify.outputs.digest }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to DEV ACR
+        run: az acr login --name "${{ vars.ACR_NAME }}"
+
+      - name: Resolve immutable image tag
+        id: tag
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "value=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Compose image reference
+        id: image
+        run: |
+          echo "ref=${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.value }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push immutable image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.ref }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify image in DEV ACR
+        id: verify
+        run: |
+          DIGEST=$(az acr manifest show-metadata \
+            --registry "${{ vars.ACR_NAME }}" \
+            --name "${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.value }}" \
+            --query digest -o tsv)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
   ci-summary:
     name: CI summary
     if: always()
-    needs: [pr-title, dependency-review, quality, trivy, smoke]
+    needs: [quality, trivy, smoke, build-push-dev-acr]
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Publish PR CI summary
+      - name: Publish push CI summary
         run: |
-          echo "## CI (PR) Execution Summary" >> "$GITHUB_STEP_SUMMARY"
+          TAG="sha-${GITHUB_SHA::7}"
+          IMAGE_REF="${{ needs.build-push-dev-acr.outputs.image_ref }}"
+          IMAGE_DIGEST="${{ needs.build-push-dev-acr.outputs.image_digest }}"
+
+          if [[ -z "$IMAGE_REF" ]]; then
+            IMAGE_REF="n/a"
+          fi
+          if [[ -z "$IMAGE_DIGEST" ]]; then
+            IMAGE_DIGEST="n/a"
+          fi
+
+          echo "## CI (Push) Execution Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Event | \`${{ github.event_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| PR | \`#${{ github.event.pull_request.number }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Source branch | \`${{ github.head_ref }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| PR title check | \`${{ needs.pr-title.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Dependency review | \`${{ needs.dependency-review.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch/Ref | \`${{ github.ref_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Quality (lint/test/sonar/audit) | \`${{ needs.quality.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Trivy | \`${{ needs.trivy.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker smoke | \`${{ needs.smoke.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build/push DEV ACR | \`${{ needs.build-push-dev-acr.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Sonar scan runs when \`SONAR_TOKEN\` exists and PR is from this repository." >> "$GITHUB_STEP_SUMMARY"
+          echo "### Image for CD" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`image_tag\`: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`image_ref\`: \`$IMAGE_REF\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`image_digest\`: \`$IMAGE_DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "CD launch example: \`environment=dev action=apply image_tag=$TAG\`" >> "$GITHUB_STEP_SUMMARY"
