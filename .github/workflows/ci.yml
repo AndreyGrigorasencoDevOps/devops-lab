@@ -1,0 +1,285 @@
+name: CI
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: task-api
+  SMOKE_PORT: 3000
+  SMOKE_CONTAINER_PORT: 3000
+  SMOKE_HEALTH_PATH: /health
+
+jobs:
+  pr-title:
+    name: Validate PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Check semantic PR title
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            ci
+            chore
+            refactor
+            test
+            build
+            perf
+            revert
+          requireScope: false
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+  quality:
+    name: Lint, tests, audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/lcov.info
+
+      - name: Security audit (prod deps)
+        run: npm audit --omit=dev --audit-level=high
+
+  trivy:
+    name: Trivy scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.26.0
+        with:
+          version: latest
+          scan-type: fs
+          scan-ref: .
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+
+      - name: Trivy config scan
+        uses: aquasecurity/trivy-action@0.26.0
+        with:
+          version: latest
+          scan-type: config
+          scan-ref: .
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+
+  smoke:
+    name: Docker smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: taskdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d taskdb"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build container for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: local/smoke:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (/health)
+        run: |
+          cid=$(docker run -d \
+            -p "$SMOKE_PORT:$SMOKE_CONTAINER_PORT" \
+            --add-host=host.docker.internal:host-gateway \
+            -e NODE_ENV=production \
+            -e DB_HOST=host.docker.internal \
+            -e DB_PORT=5432 \
+            -e DB_USER=postgres \
+            -e DB_PASSWORD=postgres \
+            -e DB_NAME=taskdb \
+            local/smoke:test)
+          trap 'docker rm -f "$cid" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 2 "http://127.0.0.1:$SMOKE_PORT$SMOKE_HEALTH_PATH"; then
+              exit 0
+            fi
+            echo "Attempt $i/30 failed, retrying in 2s..."
+            sleep 2
+          done
+          echo "--- docker ps -a ---"
+          docker ps -a
+          echo "--- docker logs $cid ---"
+          docker logs "$cid"
+          exit 1
+
+  build-push-dev-acr:
+    name: Build and push image to DEV ACR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [quality, trivy, smoke]
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      image_tag: ${{ steps.tag.outputs.value }}
+      image_ref: ${{ steps.image.outputs.ref }}
+      image_digest: ${{ steps.verify.outputs.digest }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to DEV ACR
+        run: az acr login --name "${{ vars.ACR_NAME }}"
+
+      - name: Resolve immutable image tag
+        id: tag
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "value=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Compose image reference
+        id: image
+        run: |
+          echo "ref=${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.value }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push immutable image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.ref }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify image in DEV ACR
+        id: verify
+        run: |
+          DIGEST=$(az acr manifest show-metadata \
+            --registry "${{ vars.ACR_NAME }}" \
+            --name "${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.value }}" \
+            --query digest -o tsv)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+  ci-summary:
+    name: CI summary
+    if: always()
+    needs: [pr-title, dependency-review, quality, trivy, smoke, build-push-dev-acr]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Publish CI summary
+        run: |
+          TAG="sha-${GITHUB_SHA::7}"
+          IMAGE_REF="n/a (not pushed in this run)"
+          IMAGE_DIGEST="n/a"
+
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            IMAGE_REF="${{ needs.build-push-dev-acr.outputs.image_ref }}"
+            IMAGE_DIGEST="${{ needs.build-push-dev-acr.outputs.image_digest }}"
+          fi
+
+          echo "## CI Execution Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Event | \`${{ github.event_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch/Ref | \`${{ github.ref_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| PR title check | \`${{ needs.pr-title.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Dependency review | \`${{ needs.dependency-review.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Quality (lint/test/audit) | \`${{ needs.quality.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Trivy | \`${{ needs.trivy.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Docker smoke | \`${{ needs.smoke.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build/push DEV ACR | \`${{ needs.build-push-dev-acr.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Image for CD" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- `image_tag`: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- `image_ref`: \`$IMAGE_REF\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- `image_digest`: \`$IMAGE_DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "CD launch example: \`environment=dev action=apply image_tag=$TAG\`" >> "$GITHUB_STEP_SUMMARY"

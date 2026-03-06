@@ -1,329 +1,122 @@
-# Terraform (Azure) — Infrastructure as Code
+# Terraform for Dev and Prod
 
-This folder contains Terraform configuration split by environment, each with its own variables, state, and outputs.
+This directory contains a single Terraform stack used for both environments via tfvars and remote backend files.
 
-```
+## Structure
+
+```text
 terraform/
-├── environments/
-│   ├── dev/
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   ├── outputs.tf
-│   │   ├── versions.tf
-│   │   └── terraform.tfvars
-│   └── prod/
-│       ├── main.tf
-│       ├── variables.tf
-│       ├── outputs.tf
-│       ├── versions.tf
-│       └── terraform.tfvars
-└── modules/
++-- main.tf
++-- variables.tf
++-- outputs.tf
++-- versions.tf
++-- .terraform.lock.hcl
++-- backend/
+�   +-- dev.hcl
+�   L-- prod.hcl
+L-- vars/
+    +-- dev.tfvars
+    L-- prod.tfvars
 ```
 
----
+## What this stack manages
 
-## Requirements
+- Resource Group
+- Azure Container Registry (ACR)
+- Azure Container App
+- Shared-or-dedicated Container Apps Environment (CAE)
+- Shared-or-dedicated Key Vault
+- Key Vault secrets for app runtime
+- Role assignments:
+  - `AcrPull` for Container App managed identity
+  - `Key Vault Secrets User` for Container App managed identity
 
-| Tool | Version |
-|------|---------|
-| Terraform | `>= 1.6` |
-| Azure CLI | latest stable |
-| Git | any |
+## Environment model
 
-You also need **Contributor** (or higher) access on the target Azure subscription/resource group.
+- `dev` creates CAE and Key Vault (shared resources).
+- `prod` uses shared CAE and shared Key Vault via data sources.
+- Both environments keep isolated Terraform state keys:
+  - `dev.terraform.tfstate`
+  - `prod.terraform.tfstate`
 
-### Verify versions
+## Backend
 
-```bash
-terraform -version
-az version
-```
+Backends are configured in:
 
----
+- `backend/dev.hcl`
+- `backend/prod.hcl`
 
-## Azure Login
+Each command must run `terraform init` with the matching backend file.
 
-```bash
-az login
-# or
-az login --use-device-code
-```
+## Required tools
 
-Check current account/subscription context:
+- Terraform `>= 1.6`
+- Azure CLI
+- GitHub OIDC or Azure CLI login with sufficient RBAC
 
-```bash
-az account show
-az account list -o table
-```
-
----
-
-## Choose Environment (dev / prod)
-
-**Option A (recommended)** — run commands inside the env folder:
-
-```bash
-cd terraform/environments/dev
-# or
-cd terraform/environments/prod
-```
-
-**Option B** — run from repo root using `-chdir`:
-
-```bash
-terraform -chdir=terraform/environments/dev init
-terraform -chdir=terraform/environments/prod init
-```
-
----
-
-## How To Init / Plan / Apply
-
-Run from repository root.
-
-`dev` must be applied first because it owns the shared CAE.
+## Local usage
 
 ### Dev
 
 ```bash
-terraform -chdir=terraform/environments/dev init -backend-config=backend.hcl -reconfigure
-terraform -chdir=terraform/environments/dev plan -var-file=terraform.tfvars -out=tfplan
-terraform -chdir=terraform/environments/dev apply tfplan
+terraform -chdir=terraform init -backend-config=backend/dev.hcl -reconfigure
+terraform -chdir=terraform plan -var-file=vars/dev.tfvars -var="container_image_tag=sha-abc1234"
+terraform -chdir=terraform apply -var-file=vars/dev.tfvars -var="container_image_tag=sha-abc1234"
+terraform -chdir=terraform destroy -var-file=vars/dev.tfvars -auto-approve
 ```
 
 ### Prod
 
 ```bash
-terraform -chdir=terraform/environments/prod init -backend-config=backend.hcl -reconfigure
-terraform -chdir=terraform/environments/prod plan -var-file=terraform.tfvars -out=tfplan
-terraform -chdir=terraform/environments/prod apply tfplan
+terraform -chdir=terraform init -backend-config=backend/prod.hcl -reconfigure
+terraform -chdir=terraform plan -var-file=vars/prod.tfvars -var="container_image_tag=sha-abc1234"
+terraform -chdir=terraform apply -var-file=vars/prod.tfvars -var="container_image_tag=sha-abc1234"
+terraform -chdir=terraform destroy -var-file=vars/prod.tfvars -auto-approve
 ```
 
-If backend settings changed or state needs migration:
+## Runtime variables
 
-```bash
-terraform -chdir=terraform/environments/dev init -backend-config=backend.hcl -migrate-state
-terraform -chdir=terraform/environments/prod init -backend-config=backend.hcl -migrate-state
-```
+Important Terraform variables:
 
----
+- `env`
+- `location`
+- `tags`
+- `container_image_tag`
+- `use_shared_cae`
+- `shared_cae_name`
+- `shared_cae_resource_group_name`
+- `use_shared_key_vault`
+- `shared_key_vault_name`
+- `shared_key_vault_resource_group_name`
+- `app_env_vars` (non-sensitive map)
+- `app_secrets` (sensitive map)
 
-## Terraform Workflow Commands
+`app_secrets` values are written into Key Vault and referenced by Container App.
 
-> Examples below use **dev**. Replace `dev` with `prod` when needed.
+## CI/CD integration
 
-### 1. Init
+- CI builds and pushes immutable image tags (`sha-<short_sha>`) to DEV ACR.
+- CD receives `image_tag` and runs Terraform `plan|apply|destroy`.
+- For PROD `plan/apply`, CD promotes the image from DEV ACR to PROD ACR by digest before Terraform.
 
-Initializes providers and remote backend state.
+## GitHub environment configuration
 
-```bash
-cd terraform/environments/dev
-terraform init
-```
+Each GitHub environment (`dev`, `prod`) must define:
 
-### 2. Validate
+### Variables
 
-Quick syntax/config sanity check.
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `ACR_NAME`
+- `ACR_LOGIN_SERVER`
+- `TF_APP_ENV_VARS_JSON` (optional JSON map, example: `{"NODE_ENV":"production"}`)
 
-```bash
-terraform validate
-```
+### Secrets
 
-### 3. Format
+- `TF_APP_SECRETS_JSON` (optional JSON map, example: `{"DB_HOST":"...","DB_PASSWORD":"..."}`)
 
-```bash
-terraform fmt -recursive
-```
+## Notes
 
-### 4. Plan
-
-Creates an execution plan — shows what Terraform will change.
-
-Using `terraform.tfvars` in the env folder (recommended):
-
-```bash
-terraform plan
-```
-
-Explicitly pointing to a tfvars file:
-
-```bash
-terraform plan -var-file="terraform.tfvars"
-```
-
-Save the plan to a file (optional):
-
-```bash
-terraform plan -out tfplan
-```
-
-### 5. Apply
-
-```bash
-terraform apply
-```
-
-From a saved plan:
-
-```bash
-terraform apply tfplan
-```
-
-### 6. Outputs
-
-```bash
-terraform output
-```
-
-### 7. Destroy
-
-Destroys everything managed by the current environment state.
-
-```bash
-terraform destroy
-```
-
-With explicit vars file:
-
-```bash
-terraform destroy -var-file="terraform.tfvars"
-```
-
----
-
-## Remote State (Azure Storage Backend)
-
-Production-ready Terraform must use remote state — local state is **not** allowed for real environments.
-
-We use an **Azure Storage Account + Blob Container** as the backend.
-
-### Create backend resources (one-time setup)
-
-These resources are created once, manually via CLI:
-
-```bash
-RG_NAME="taskapi-tfstate-rg"
-LOCATION="uksouth"
-STORAGE_ACCOUNT="taskapitfstateuks"
-CONTAINER_NAME="tfstate"
-
-az group create \
-  --name "$RG_NAME" \
-  --location "$LOCATION"
-
-az storage account create \
-  --name "$STORAGE_ACCOUNT" \
-  --resource-group "$RG_NAME" \
-  --location "$LOCATION" \
-  --sku Standard_LRS \
-  --encryption-services blob
-
-az storage container create \
-  --name "$CONTAINER_NAME" \
-  --account-name "$STORAGE_ACCOUNT" \
-  --auth-mode login
-```
-
-> Storage account name must be **globally unique** across all of Azure.
-
-### Configure backend in each environment
-
-Add a `backend` block inside the `terraform` block in each environment's `main.tf`:
-
-**`terraform/environments/dev/main.tf`**
-
-```hcl
-terraform {
-  backend "azurerm" {
-    resource_group_name  = "taskapi-tfstate-rg"
-    storage_account_name = "taskapitfstateuks"
-    container_name       = "tfstate"
-    key                  = "dev.terraform.tfstate"
-  }
-}
-```
-
-**`terraform/environments/prod/main.tf`** — same block, different key:
-
-```hcl
-key = "prod.terraform.tfstate"
-```
-
-### Initialize with backend
-
-After the backend block is added:
-
-```bash
-terraform init
-```
-
-If migrating from local state:
-
-```bash
-terraform init -migrate-state
-```
-
-### State isolation model
-
-| Environment | State Key |
-|-------------|-----------|
-| dev | `dev.terraform.tfstate` |
-| prod | `prod.terraform.tfstate` |
-
-Each environment is fully isolated — its own state file in the same storage container.
-
----
-
-## Shared CAE Model (Current)
-
-The current Terraform setup uses one shared Container Apps Environment (CAE):
-
-- `dev` creates and owns the CAE (`taskapi-dev-cae-uks` by default)
-- `prod` does **not** create a second CAE and reads the shared one via:
-  - `shared_cae_name`
-  - `shared_cae_resource_group_name`
-
-Recommended apply order:
-
-```bash
-terraform -chdir=terraform/environments/dev apply
-terraform -chdir=terraform/environments/prod apply
-```
-
-If the shared CAE already exists and was created manually, import it into the `dev` state:
-
-```bash
-terraform -chdir=terraform/environments/dev import \
-  azurerm_container_app_environment.main \
-  "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/taskapi-dev-rg-uks/providers/Microsoft.App/managedEnvironments/taskapi-dev-cae-uks"
-```
-
----
-
-## Notes & Conventions
-
-- **Never commit state files** — `.gitignore` already covers:
-  - `.terraform/`
-  - `*.tfstate` / `*.tfstate.*`
-  - `crash.log`
-- Keep environment-specific config in `terraform/environments/<env>/terraform.tfvars`
-- Follow the project's naming conventions (resource naming, region codes, etc.) from `docs/cloud-architecture.md`
-
----
-
-## Security Best Practices
-
-- Use **Azure RBAC** for access control to the storage account
-- Enable **soft delete** and **versioning** on the state blob container
-- Consider **private endpoints** for the storage account (later stage)
-- Consider a **separate subscription** for prod (future improvement)
-
----
-
-## Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| Not logged in / unauthorized | `az account show` then `az login --use-device-code` |
-| Wrong subscription | `az account list -o table` then `az account set --subscription "<ID>"` |
-| Provider or init issues | `terraform init -upgrade` |
+- `destroy` is available for both `dev` and `prod` in manual CD workflow.
+- State keys and naming conventions are preserved to avoid accidental resource replacement.
