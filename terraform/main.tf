@@ -10,11 +10,6 @@ locals {
   container_app_environment_id = var.use_shared_cae ? data.azurerm_container_app_environment.shared[0].id : azurerm_container_app_environment.main[0].id
   key_vault_id                 = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].id : azurerm_key_vault.main[0].id
   key_vault_name               = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].name : azurerm_key_vault.main[0].name
-
-  key_vault_secret_names = {
-    for env_name in keys(var.app_secrets) :
-    env_name => substr(regexreplace(lower("${var.env}-${env_name}"), "[^a-z0-9-]", "-"), 0, 127)
-  }
 }
 
 moved {
@@ -100,13 +95,6 @@ resource "azurerm_container_registry" "main" {
   tags                = local.tags
 }
 
-resource "azurerm_key_vault_secret" "app" {
-  for_each     = var.app_secrets
-  name         = local.key_vault_secret_names[each.key]
-  value        = each.value
-  key_vault_id = local.key_vault_id
-}
-
 resource "azurerm_container_app" "main" {
   name                         = "${var.project}-${var.env}-app"
   container_app_environment_id = local.container_app_environment_id
@@ -122,15 +110,6 @@ resource "azurerm_container_app" "main" {
     identity = "SystemAssigned"
   }
 
-  dynamic "secret" {
-    for_each = azurerm_key_vault_secret.app
-    content {
-      name                = local.key_vault_secret_names[secret.key]
-      key_vault_secret_id = secret.value.versionless_id
-      identity            = "System"
-    }
-  }
-
   template {
     container {
       name   = "task-api"
@@ -144,15 +123,6 @@ resource "azurerm_container_app" "main" {
         content {
           name  = app_env.key
           value = app_env.value
-        }
-      }
-
-      dynamic "env" {
-        for_each = var.app_secrets
-        iterator = app_secret
-        content {
-          name        = app_secret.key
-          secret_name = local.key_vault_secret_names[app_secret.key]
         }
       }
     }

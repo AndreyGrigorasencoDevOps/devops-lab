@@ -174,7 +174,6 @@ jobs:
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
-      APP_SECRETS_JSON: ${{ secrets.TF_APP_SECRETS_JSON }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -198,10 +197,6 @@ jobs:
 
           if [[ -n "$APP_ENV_VARS_JSON" ]]; then
             echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "$APP_SECRETS_JSON" ]]; then
-            echo "TF_VAR_app_secrets=$APP_SECRETS_JSON" >> "$GITHUB_ENV"
           fi
 
       - name: Terraform init
@@ -242,7 +237,6 @@ jobs:
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
-      APP_SECRETS_JSON: ${{ secrets.TF_APP_SECRETS_JSON }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -264,10 +258,6 @@ jobs:
 
           if [[ -n "$APP_ENV_VARS_JSON" ]]; then
             echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "$APP_SECRETS_JSON" ]]; then
-            echo "TF_VAR_app_secrets=$APP_SECRETS_JSON" >> "$GITHUB_ENV"
           fi
 
       - name: Terraform init
@@ -305,7 +295,6 @@ jobs:
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
-      APP_SECRETS_JSON: ${{ secrets.TF_APP_SECRETS_JSON }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -325,10 +314,6 @@ jobs:
           set -euo pipefail
           if [[ -n "$APP_ENV_VARS_JSON" ]]; then
             echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "$APP_SECRETS_JSON" ]]; then
-            echo "TF_VAR_app_secrets=$APP_SECRETS_JSON" >> "$GITHUB_ENV"
           fi
 
       - name: Terraform init

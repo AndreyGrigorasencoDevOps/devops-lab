@@ -1,4 +1,4 @@
-# devops-lab
+ï»¿# devops-lab
 
 Node.js (Express) Task API used as a DevOps playground.
 
@@ -40,16 +40,16 @@ docker compose up --build
 +-- src/
 +-- test/
 +-- terraform/
-¦   +-- main.tf
-¦   +-- variables.tf
-¦   +-- outputs.tf
-¦   +-- versions.tf
-¦   +-- backend/
-¦   ¦   +-- dev.hcl
-¦   ¦   L-- prod.hcl
-¦   L-- vars/
-¦       +-- dev.tfvars
-¦       L-- prod.tfvars
+Â¦   +-- main.tf
+Â¦   +-- variables.tf
+Â¦   +-- outputs.tf
+Â¦   +-- versions.tf
+Â¦   +-- backend/
+Â¦   Â¦   +-- dev.hcl
+Â¦   Â¦   L-- prod.hcl
+Â¦   L-- vars/
+Â¦       +-- dev.tfvars
+Â¦       L-- prod.tfvars
 L-- .github/workflows/
     +-- ci.yml
     L-- cd.yml
@@ -117,7 +117,7 @@ Variables:
 
 Secrets:
 
-- `TF_APP_SECRETS_JSON` (optional JSON map)
+- Secrets are managed manually in Azure (no TF secret input).
 
 ## Scripts
 
@@ -126,3 +126,4 @@ Secrets:
 - `npm run lint`
 - `npm test`
 - `npm run test:coverage`
+
