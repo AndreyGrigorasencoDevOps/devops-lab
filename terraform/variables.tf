@@ -112,13 +112,6 @@ variable "app_env_vars" {
   default     = {}
 }
 
-variable "app_secrets" {
-  type        = map(string)
-  description = "Sensitive values written to Key Vault and referenced by Container App."
-  default     = {}
-  sensitive   = true
-}
-
 variable "key_vault_allowed_ip_cidrs" {
   type        = list(string)
   description = "Public CIDRs allowed to reach Key Vault when firewall is enabled."

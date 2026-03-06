@@ -26,7 +26,6 @@ L-- vars/
 - Azure Container App
 - Shared-or-dedicated Container Apps Environment (CAE)
 - Shared-or-dedicated Key Vault
-- Key Vault secrets for app runtime
 - Role assignments:
   - `AcrPull` for Container App managed identity
   - `Key Vault Secrets User` for Container App managed identity
@@ -89,9 +88,8 @@ Important Terraform variables:
 - `shared_key_vault_name`
 - `shared_key_vault_resource_group_name`
 - `app_env_vars` (non-sensitive map)
-- `app_secrets` (sensitive map)
 
-`app_secrets` values are written into Key Vault and referenced by Container App.
+Secrets are managed manually in Azure Key Vault/Container Apps.
 
 ## CI/CD integration
 
@@ -114,7 +112,7 @@ Each GitHub environment (`dev`, `prod`) must define:
 
 ### Secrets
 
-- `TF_APP_SECRETS_JSON` (optional JSON map, example: `{"DB_HOST":"...","DB_PASSWORD":"..."}`)
+- No Terraform secret input is required; secrets are managed manually.
 
 ## Notes
 
