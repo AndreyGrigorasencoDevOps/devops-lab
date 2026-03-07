@@ -205,7 +205,6 @@ jobs:
           fi
 
       - name: Allow runner IP in Key Vault firewall (dev)
-        if: ${{ env.KV_NETWORK_MODE == 'firewall' }}
         id: kv_firewall_dev
         run: |
           set -euo pipefail
@@ -231,7 +230,24 @@ jobs:
             KV_NAME="${PROJECT_NAME}-${ENV_NAME}-kv-uks"
           fi
 
-          KV_ID="$(az keyvault show --name "${KV_NAME}" --query id -o tsv)"
+          KV_ID="$(az keyvault show --name "${KV_NAME}" --query id -o tsv 2>/dev/null || true)"
+          if [[ -z "${KV_ID}" ]]; then
+            echo "Key Vault ${KV_NAME} not found yet; skipping firewall bootstrap."
+            echo "kv_name=" >> "$GITHUB_OUTPUT"
+            echo "kv_rg=" >> "$GITHUB_OUTPUT"
+            echo "runner_ip=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          KV_DEFAULT_ACTION="$(az keyvault show --name "${KV_NAME}" --query properties.networkAcls.defaultAction -o tsv 2>/dev/null || true)"
+          if [[ "${KV_NETWORK_MODE}" != "firewall" && "${KV_DEFAULT_ACTION}" != "Deny" ]]; then
+            echo "KV firewall bootstrap not required (mode=${KV_NETWORK_MODE}, defaultAction=${KV_DEFAULT_ACTION:-n/a})."
+            echo "kv_name=" >> "$GITHUB_OUTPUT"
+            echo "kv_rg=" >> "$GITHUB_OUTPUT"
+            echo "runner_ip=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           KV_RG="$(printf '%s' "${KV_ID}" | awk -F/ '{for (i=1; i<=NF; i++) if ($i=="resourceGroups") {print $(i+1); exit}}')"
           RUNNER_IP="$(curl -fsS https://api.ipify.org || curl -fsS https://ifconfig.me || true)"
 
@@ -310,7 +326,7 @@ jobs:
           esac
 
       - name: Remove runner IP from Key Vault firewall (dev)
-        if: ${{ always() && env.KV_NETWORK_MODE == 'firewall' }}
+        if: always()
         run: |
           set -euo pipefail
           KV_NAME="${{ steps.kv_firewall_dev.outputs.kv_name }}"
@@ -370,7 +386,6 @@ jobs:
           fi
 
       - name: Allow runner IP in Key Vault firewall (prod)
-        if: ${{ env.KV_NETWORK_MODE == 'firewall' }}
         id: kv_firewall_prod
         run: |
           set -euo pipefail
@@ -391,7 +406,24 @@ jobs:
             exit 1
           fi
 
-          KV_ID="$(az keyvault show --name "${KV_NAME}" --query id -o tsv)"
+          KV_ID="$(az keyvault show --name "${KV_NAME}" --query id -o tsv 2>/dev/null || true)"
+          if [[ -z "${KV_ID}" ]]; then
+            echo "Key Vault ${KV_NAME} not found yet; skipping firewall bootstrap."
+            echo "kv_name=" >> "$GITHUB_OUTPUT"
+            echo "kv_rg=" >> "$GITHUB_OUTPUT"
+            echo "runner_ip=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          KV_DEFAULT_ACTION="$(az keyvault show --name "${KV_NAME}" --query properties.networkAcls.defaultAction -o tsv 2>/dev/null || true)"
+          if [[ "${KV_NETWORK_MODE}" != "firewall" && "${KV_DEFAULT_ACTION}" != "Deny" ]]; then
+            echo "KV firewall bootstrap not required (mode=${KV_NETWORK_MODE}, defaultAction=${KV_DEFAULT_ACTION:-n/a})."
+            echo "kv_name=" >> "$GITHUB_OUTPUT"
+            echo "kv_rg=" >> "$GITHUB_OUTPUT"
+            echo "runner_ip=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           KV_RG="$(printf '%s' "${KV_ID}" | awk -F/ '{for (i=1; i<=NF; i++) if ($i=="resourceGroups") {print $(i+1); exit}}')"
           RUNNER_IP="$(curl -fsS https://api.ipify.org || curl -fsS https://ifconfig.me || true)"
 
@@ -467,7 +499,7 @@ jobs:
           esac
 
       - name: Remove runner IP from Key Vault firewall (prod)
-        if: ${{ always() && env.KV_NETWORK_MODE == 'firewall' }}
+        if: always()
         run: |
           set -euo pipefail
           KV_NAME="${{ steps.kv_firewall_prod.outputs.kv_name }}"
@@ -525,7 +557,6 @@ jobs:
           fi
 
       - name: Allow runner IP in Key Vault firewall (prod destroy)
-        if: ${{ env.KV_NETWORK_MODE == 'firewall' }}
         id: kv_firewall_prod_destroy
         run: |
           set -euo pipefail
@@ -546,7 +577,24 @@ jobs:
             exit 1
           fi
 
-          KV_ID="$(az keyvault show --name "${KV_NAME}" --query id -o tsv)"
+          KV_ID="$(az keyvault show --name "${KV_NAME}" --query id -o tsv 2>/dev/null || true)"
+          if [[ -z "${KV_ID}" ]]; then
+            echo "Key Vault ${KV_NAME} not found yet; skipping firewall bootstrap."
+            echo "kv_name=" >> "$GITHUB_OUTPUT"
+            echo "kv_rg=" >> "$GITHUB_OUTPUT"
+            echo "runner_ip=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          KV_DEFAULT_ACTION="$(az keyvault show --name "${KV_NAME}" --query properties.networkAcls.defaultAction -o tsv 2>/dev/null || true)"
+          if [[ "${KV_NETWORK_MODE}" != "firewall" && "${KV_DEFAULT_ACTION}" != "Deny" ]]; then
+            echo "KV firewall bootstrap not required (mode=${KV_NETWORK_MODE}, defaultAction=${KV_DEFAULT_ACTION:-n/a})."
+            echo "kv_name=" >> "$GITHUB_OUTPUT"
+            echo "kv_rg=" >> "$GITHUB_OUTPUT"
+            echo "runner_ip=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           KV_RG="$(printf '%s' "${KV_ID}" | awk -F/ '{for (i=1; i<=NF; i++) if ($i=="resourceGroups") {print $(i+1); exit}}')"
           RUNNER_IP="$(curl -fsS https://api.ipify.org || curl -fsS https://ifconfig.me || true)"
 
@@ -574,7 +622,7 @@ jobs:
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/prod.tfvars -auto-approve
 
       - name: Remove runner IP from Key Vault firewall (prod destroy)
-        if: ${{ always() && env.KV_NETWORK_MODE == 'firewall' }}
+        if: always()
         run: |
           set -euo pipefail
           KV_NAME="${{ steps.kv_firewall_prod_destroy.outputs.kv_name }}"
