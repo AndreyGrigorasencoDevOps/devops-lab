@@ -33,28 +33,21 @@ Use Azure login step in workflows:
 
 ## 3) Key Vault and Secrets
 
-Database bootstrap model:
+Database + Key Vault model:
 
 - PostgreSQL server and app database are created by Terraform.
-- Container App receives required DB runtime env vars from Terraform:
-  - `DB_HOST`
-  - `DB_PORT`
-  - `DB_USER`
-  - `DB_PASSWORD`
-  - `DB_NAME`
+- Container App reads all `DB_*` values from Key Vault references.
+- `DB_PASSWORD` is manual in Key Vault as `<env>-db-password`.
+- Terraform writes/updates:
+  - `<env>-db-host`
+  - `<env>-db-port`
+  - `<env>-db-user`
+  - `<env>-db-name`
 
-For non-database application secrets, keep using Key Vault.
+Required Key Vault roles:
 
-Reference naming contract for manual app secrets:
-
-- `DB_HOST`
-- `DB_USER`
-- `DB_PASSWORD`
-- `DB_NAME`
-
-Role expectation:
-
-- Container App managed identity must have `Key Vault Secrets User` on the shared Key Vault.
+- Terraform deploy identity (GitHub OIDC app): `Key Vault Secrets Officer`
+- Container App user-assigned identity: `Key Vault Secrets User`
 
 ## 4) Useful Azure CLI Checks
 
@@ -92,10 +85,17 @@ az acr manifest show-metadata \
 ### Check Key Vault secret existence
 
 ```bash
-az keyvault secret show --vault-name <kv_name> --name DB_PASSWORD --query id -o tsv
+az keyvault secret show --vault-name <kv_name> --name dev-db-password --query id -o tsv
 ```
 
-### Check role assignment for managed identity
+### Set DB password secret (manual source of truth)
+
+```bash
+az keyvault secret set --vault-name <kv_name> --name dev-db-password --value "<strong_password_dev>"
+az keyvault secret set --vault-name <kv_name> --name prod-db-password --value "<strong_password_prod>"
+```
+
+### Check role assignment for identity
 
 ```bash
 az role assignment list \

@@ -104,6 +104,7 @@ Managed by Terraform:
 - Log Analytics Workspace
 - Container Apps Environment (shared or dedicated)
 - Azure Container Registry
+- Azure Database for PostgreSQL Flexible Server (+ app database)
 - Azure Container App
 - Key Vault (shared or dedicated mode)
 - RBAC assignments (`AcrPull`, `Key Vault Secrets User`)
@@ -117,12 +118,18 @@ Managed by Terraform:
 - Key Vault used for secret management contract.
 - Principle of least privilege enforced through RBAC assignments.
 
-Secret naming contract currently documented as:
+Database secret contract:
 
-- `DB_HOST`
-- `DB_USER`
-- `DB_PASSWORD`
-- `DB_NAME`
+- `<env>-db-host`
+- `<env>-db-port`
+- `<env>-db-user`
+- `<env>-db-password`
+- `<env>-db-name`
+
+Ownership:
+
+- `<env>-db-password` is manually managed in Key Vault.
+- `<env>-db-host`, `<env>-db-port`, `<env>-db-user`, `<env>-db-name` are written by Terraform to Key Vault.
 
 ---
 

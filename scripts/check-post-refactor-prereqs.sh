@@ -10,8 +10,8 @@ SHARED_KV_NAME=""
 SHARED_KV_RG=""
 DEV_RESOURCE_GROUP=""
 PROD_RESOURCE_GROUP=""
-DEV_APP_NAME=""
-PROD_APP_NAME=""
+DEV_IDENTITY_NAME=""
+PROD_IDENTITY_NAME=""
 
 FAILURES=0
 WARNINGS=0
@@ -28,15 +28,17 @@ Options:
   --kv-rg <name>                 Shared Key Vault resource group (default: inferred from terraform/vars/prod.tfvars)
   --dev-rg <name>                Dev resource group (default: <project>-dev-rg-uks)
   --prod-rg <name>               Prod resource group (default: <project>-prod-rg-uks)
-  --dev-app <name>               Dev Container App name (default: <project>-dev-app)
-  --prod-app <name>              Prod Container App name (default: <project>-prod-app)
+  --dev-identity <name>          Dev User Assigned Identity name (default: <project>-dev-ca-identity)
+  --prod-identity <name>         Prod User Assigned Identity name (default: <project>-prod-ca-identity)
   -h, --help                     Show this help
 
 What it checks (read-only):
   1) GitHub repo Sonar config (SONAR_TOKEN, SONAR_PROJECT, SONAR_ORG)
   2) GitHub environment vars for dev/prod
   3) Azure shared Key Vault existence
-  4) Key Vault Secrets User role on Container App managed identities
+  4) Required DB secrets in shared Key Vault (<env>-db-password)
+  5) Optional DB runtime secrets in shared Key Vault (<env>-db-host/port/user/name)
+  6) Key Vault Secrets User role on User Assigned identities used by Container App
 EOF
 }
 
@@ -100,67 +102,96 @@ infer_terraform_defaults() {
   if [[ -z "${PROD_RESOURCE_GROUP}" && -n "${PROJECT_NAME}" ]]; then
     PROD_RESOURCE_GROUP="${PROJECT_NAME}-prod-rg-uks"
   fi
-  if [[ -z "${DEV_APP_NAME}" && -n "${PROJECT_NAME}" ]]; then
-    DEV_APP_NAME="${PROJECT_NAME}-dev-app"
+  if [[ -z "${DEV_IDENTITY_NAME}" && -n "${PROJECT_NAME}" ]]; then
+    DEV_IDENTITY_NAME="${PROJECT_NAME}-dev-ca-identity"
   fi
-  if [[ -z "${PROD_APP_NAME}" && -n "${PROJECT_NAME}" ]]; then
-    PROD_APP_NAME="${PROJECT_NAME}-prod-app"
+  if [[ -z "${PROD_IDENTITY_NAME}" && -n "${PROJECT_NAME}" ]]; then
+    PROD_IDENTITY_NAME="${PROJECT_NAME}-prod-ca-identity"
   fi
 }
 
-check_gh_secret() {
-  local secret_name="$1"
-  if gh api "repos/${REPO}/actions/secrets/${secret_name}" >/dev/null 2>&1; then
-    pass "GitHub secret '${secret_name}' exists"
+first_line() {
+  printf '%s\n' "$1" | head -n 1
+}
+
+is_gh_forbidden_error() {
+  local msg="$1"
+  printf '%s' "${msg}" | grep -qiE "HTTP 403|forbidden|Resource not accessible by personal access token|insufficient"
+}
+
+list_contains_name() {
+  local list_value="$1"
+  local expected_name="$2"
+  printf '%s\n' "${list_value}" | grep -Fxq "${expected_name}"
+}
+
+check_name_in_list_required() {
+  local list_value="$1"
+  local expected_name="$2"
+  local pass_msg="$3"
+  local fail_msg="$4"
+  if list_contains_name "${list_value}" "${expected_name}"; then
+    pass "${pass_msg}"
   else
-    fail "GitHub secret '${secret_name}' is missing in ${REPO}"
+    fail "${fail_msg}"
   fi
 }
 
-check_gh_repo_var() {
-  local var_name="$1"
-  if gh api "repos/${REPO}/actions/variables/${var_name}" >/dev/null 2>&1; then
-    pass "GitHub repo variable '${var_name}' exists"
+check_name_in_list_optional() {
+  local list_value="$1"
+  local expected_name="$2"
+  local pass_msg="$3"
+  local warn_msg="$4"
+  if list_contains_name "${list_value}" "${expected_name}"; then
+    pass "${pass_msg}"
   else
-    fail "GitHub repo variable '${var_name}' is missing in ${REPO}"
+    warn "${warn_msg}"
   fi
 }
 
-check_gh_env_var_required() {
+check_key_vault_secret_exists() {
+  local kv_name="$1"
+  local secret_name="$2"
+
+  if az keyvault secret show --vault-name "${kv_name}" --name "${secret_name}" --query id -o tsv >/dev/null 2>&1; then
+    pass "Key Vault secret '${secret_name}' exists in '${kv_name}'"
+  else
+    fail "Key Vault secret '${secret_name}' is missing in '${kv_name}'"
+  fi
+}
+
+check_key_vault_secret_optional() {
+  local kv_name="$1"
+  local secret_name="$2"
+
+  if az keyvault secret show --vault-name "${kv_name}" --name "${secret_name}" --query id -o tsv >/dev/null 2>&1; then
+    pass "Key Vault optional secret '${secret_name}' exists in '${kv_name}'"
+  else
+    warn "Key Vault optional secret '${secret_name}' is missing in '${kv_name}' (Terraform can create/update it on apply)"
+  fi
+}
+
+kv_db_secret_name() {
   local env_name="$1"
-  local var_name="$2"
-  if gh api "repos/${REPO}/environments/${env_name}/variables/${var_name}" >/dev/null 2>&1; then
-    pass "GitHub env '${env_name}' variable '${var_name}' exists"
-  else
-    fail "GitHub env '${env_name}' variable '${var_name}' is missing"
-  fi
+  local key_name="$2"
+  printf "%s-db-%s" "${env_name}" "${key_name}"
 }
 
-check_gh_env_var_optional() {
-  local env_name="$1"
-  local var_name="$2"
-  if gh api "repos/${REPO}/environments/${env_name}/variables/${var_name}" >/dev/null 2>&1; then
-    pass "GitHub env '${env_name}' optional variable '${var_name}' exists"
-  else
-    warn "GitHub env '${env_name}' optional variable '${var_name}' is not set"
-  fi
-}
-
-check_key_vault_role_for_app() {
-  local app_name="$1"
-  local app_rg="$2"
+check_key_vault_role_for_identity() {
+  local identity_name="$1"
+  local identity_rg="$2"
   local kv_id="$3"
   local principal_id
   local assignment_count
 
-  principal_id="$(az containerapp show \
-    --name "${app_name}" \
-    --resource-group "${app_rg}" \
-    --query identity.principalId \
+  principal_id="$(az identity show \
+    --name "${identity_name}" \
+    --resource-group "${identity_rg}" \
+    --query principalId \
     -o tsv 2>/dev/null || true)"
 
   if [[ -z "${principal_id}" ]]; then
-    warn "Container App '${app_name}' not found in '${app_rg}' (role check skipped)"
+    warn "User Assigned Identity '${identity_name}' not found in '${identity_rg}' (role check skipped)"
     return
   fi
 
@@ -171,9 +202,9 @@ check_key_vault_role_for_app() {
     -o tsv 2>/dev/null || echo "0")"
 
   if [[ "${assignment_count}" =~ ^[0-9]+$ ]] && [[ "${assignment_count}" -ge 1 ]]; then
-    pass "Container App '${app_name}' has 'Key Vault Secrets User' on shared Key Vault"
+    pass "Identity '${identity_name}' has 'Key Vault Secrets User' on shared Key Vault"
   else
-    fail "Container App '${app_name}' is missing 'Key Vault Secrets User' on shared Key Vault"
+    fail "Identity '${identity_name}' is missing 'Key Vault Secrets User' on shared Key Vault"
   fi
 }
 
@@ -203,12 +234,12 @@ while [[ $# -gt 0 ]]; do
       PROD_RESOURCE_GROUP="${2:-}"
       shift 2
       ;;
-    --dev-app)
-      DEV_APP_NAME="${2:-}"
+    --dev-identity)
+      DEV_IDENTITY_NAME="${2:-}"
       shift 2
       ;;
-    --prod-app)
-      PROD_APP_NAME="${2:-}"
+    --prod-identity)
+      PROD_IDENTITY_NAME="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -230,8 +261,8 @@ printf '\n== Context ==\n'
 printf 'Repo: %s\n' "${REPO:-n/a}"
 printf 'Project: %s\n' "${PROJECT_NAME:-n/a}"
 printf 'Shared KV: %s (rg: %s)\n' "${SHARED_KV_NAME:-n/a}" "${SHARED_KV_RG:-n/a}"
-printf 'Dev app: %s (rg: %s)\n' "${DEV_APP_NAME:-n/a}" "${DEV_RESOURCE_GROUP:-n/a}"
-printf 'Prod app: %s (rg: %s)\n' "${PROD_APP_NAME:-n/a}" "${PROD_RESOURCE_GROUP:-n/a}"
+printf 'Dev identity: %s (rg: %s)\n' "${DEV_IDENTITY_NAME:-n/a}" "${DEV_RESOURCE_GROUP:-n/a}"
+printf 'Prod identity: %s (rg: %s)\n' "${PROD_IDENTITY_NAME:-n/a}" "${PROD_RESOURCE_GROUP:-n/a}"
 printf '\n'
 
 GH_AVAILABLE=true
@@ -252,19 +283,86 @@ if [[ "${GH_AVAILABLE}" == "true" ]]; then
   if [[ -z "${REPO}" ]]; then
     fail "GitHub repo is unresolved. Pass --repo owner/repo."
   elif gh auth status >/dev/null 2>&1; then
+    GH_CHECKS_READABLE=true
     pass "GitHub CLI auth is active"
-    check_gh_secret "SONAR_TOKEN"
-    check_gh_repo_var "SONAR_PROJECT"
-    check_gh_repo_var "SONAR_ORG"
 
-    for env_name in dev prod; do
-      check_gh_env_var_required "${env_name}" "AZURE_CLIENT_ID"
-      check_gh_env_var_required "${env_name}" "AZURE_TENANT_ID"
-      check_gh_env_var_required "${env_name}" "AZURE_SUBSCRIPTION_ID"
-      check_gh_env_var_required "${env_name}" "ACR_NAME"
-      check_gh_env_var_required "${env_name}" "ACR_LOGIN_SERVER"
-      check_gh_env_var_optional "${env_name}" "TF_APP_ENV_VARS_JSON"
-    done
+    if ! REPO_SECRET_NAMES="$(gh secret list -R "${REPO}" --json name --jq '.[].name' 2>&1)"; then
+      GH_CHECKS_READABLE=false
+      if is_gh_forbidden_error "${REPO_SECRET_NAMES}"; then
+        fail "GitHub token cannot read repository secrets in ${REPO} (HTTP 403)."
+      else
+        fail "Unable to list repository secrets in ${REPO}: $(first_line "${REPO_SECRET_NAMES}")"
+      fi
+    fi
+
+    if ! REPO_VARIABLE_NAMES="$(gh variable list -R "${REPO}" --json name --jq '.[].name' 2>&1)"; then
+      GH_CHECKS_READABLE=false
+      if is_gh_forbidden_error "${REPO_VARIABLE_NAMES}"; then
+        fail "GitHub token cannot read repository variables in ${REPO} (HTTP 403)."
+      else
+        fail "Unable to list repository variables in ${REPO}: $(first_line "${REPO_VARIABLE_NAMES}")"
+      fi
+    fi
+
+    if ! DEV_ENV_VARIABLE_NAMES="$(gh variable list --env dev -R "${REPO}" --json name --jq '.[].name' 2>&1)"; then
+      GH_CHECKS_READABLE=false
+      if is_gh_forbidden_error "${DEV_ENV_VARIABLE_NAMES}"; then
+        fail "GitHub token cannot read 'dev' environment variables in ${REPO} (HTTP 403)."
+      else
+        fail "Unable to list 'dev' environment variables in ${REPO}: $(first_line "${DEV_ENV_VARIABLE_NAMES}")"
+      fi
+    fi
+
+    if ! PROD_ENV_VARIABLE_NAMES="$(gh variable list --env prod -R "${REPO}" --json name --jq '.[].name' 2>&1)"; then
+      GH_CHECKS_READABLE=false
+      if is_gh_forbidden_error "${PROD_ENV_VARIABLE_NAMES}"; then
+        fail "GitHub token cannot read 'prod' environment variables in ${REPO} (HTTP 403)."
+      else
+        fail "Unable to list 'prod' environment variables in ${REPO}: $(first_line "${PROD_ENV_VARIABLE_NAMES}")"
+      fi
+    fi
+
+    if [[ "${GH_CHECKS_READABLE}" == "true" ]]; then
+      check_name_in_list_required "${REPO_SECRET_NAMES}" "SONAR_TOKEN" \
+        "GitHub secret 'SONAR_TOKEN' exists" \
+        "GitHub secret 'SONAR_TOKEN' is missing in ${REPO}"
+
+      check_name_in_list_required "${REPO_VARIABLE_NAMES}" "SONAR_PROJECT" \
+        "GitHub repo variable 'SONAR_PROJECT' exists" \
+        "GitHub repo variable 'SONAR_PROJECT' is missing in ${REPO}"
+
+      check_name_in_list_required "${REPO_VARIABLE_NAMES}" "SONAR_ORG" \
+        "GitHub repo variable 'SONAR_ORG' exists" \
+        "GitHub repo variable 'SONAR_ORG' is missing in ${REPO}"
+
+      for env_name in dev prod; do
+        ENV_VAR_NAMES="${DEV_ENV_VARIABLE_NAMES}"
+        if [[ "${env_name}" == "prod" ]]; then
+          ENV_VAR_NAMES="${PROD_ENV_VARIABLE_NAMES}"
+        fi
+
+        check_name_in_list_required "${ENV_VAR_NAMES}" "AZURE_CLIENT_ID" \
+          "GitHub env '${env_name}' variable 'AZURE_CLIENT_ID' exists" \
+          "GitHub env '${env_name}' variable 'AZURE_CLIENT_ID' is missing"
+        check_name_in_list_required "${ENV_VAR_NAMES}" "AZURE_TENANT_ID" \
+          "GitHub env '${env_name}' variable 'AZURE_TENANT_ID' exists" \
+          "GitHub env '${env_name}' variable 'AZURE_TENANT_ID' is missing"
+        check_name_in_list_required "${ENV_VAR_NAMES}" "AZURE_SUBSCRIPTION_ID" \
+          "GitHub env '${env_name}' variable 'AZURE_SUBSCRIPTION_ID' exists" \
+          "GitHub env '${env_name}' variable 'AZURE_SUBSCRIPTION_ID' is missing"
+        check_name_in_list_required "${ENV_VAR_NAMES}" "ACR_NAME" \
+          "GitHub env '${env_name}' variable 'ACR_NAME' exists" \
+          "GitHub env '${env_name}' variable 'ACR_NAME' is missing"
+        check_name_in_list_required "${ENV_VAR_NAMES}" "ACR_LOGIN_SERVER" \
+          "GitHub env '${env_name}' variable 'ACR_LOGIN_SERVER' exists" \
+          "GitHub env '${env_name}' variable 'ACR_LOGIN_SERVER' is missing"
+        check_name_in_list_optional "${ENV_VAR_NAMES}" "TF_APP_ENV_VARS_JSON" \
+          "GitHub env '${env_name}' optional variable 'TF_APP_ENV_VARS_JSON' exists" \
+          "GitHub env '${env_name}' optional variable 'TF_APP_ENV_VARS_JSON' is not set"
+      done
+    else
+      warn "Skipping GitHub variable/secret presence checks due GitHub API access errors above."
+    fi
   else
     fail "GitHub CLI is not authenticated (run: gh auth login)"
   fi
@@ -289,16 +387,23 @@ if [[ "${AZ_AVAILABLE}" == "true" ]]; then
       else
         pass "Shared Key Vault '${SHARED_KV_NAME}' exists"
 
-        if [[ -n "${DEV_APP_NAME}" && -n "${DEV_RESOURCE_GROUP}" ]]; then
-          check_key_vault_role_for_app "${DEV_APP_NAME}" "${DEV_RESOURCE_GROUP}" "${KV_ID}"
+        for env_name in dev prod; do
+          check_key_vault_secret_exists "${SHARED_KV_NAME}" "$(kv_db_secret_name "${env_name}" "password")"
+          for key_name in host port user name; do
+            check_key_vault_secret_optional "${SHARED_KV_NAME}" "$(kv_db_secret_name "${env_name}" "${key_name}")"
+          done
+        done
+
+        if [[ -n "${DEV_IDENTITY_NAME}" && -n "${DEV_RESOURCE_GROUP}" ]]; then
+          check_key_vault_role_for_identity "${DEV_IDENTITY_NAME}" "${DEV_RESOURCE_GROUP}" "${KV_ID}"
         else
-          warn "Dev Container App coordinates are unresolved (role check skipped)"
+          warn "Dev identity coordinates are unresolved (role check skipped)"
         fi
 
-        if [[ -n "${PROD_APP_NAME}" && -n "${PROD_RESOURCE_GROUP}" ]]; then
-          check_key_vault_role_for_app "${PROD_APP_NAME}" "${PROD_RESOURCE_GROUP}" "${KV_ID}"
+        if [[ -n "${PROD_IDENTITY_NAME}" && -n "${PROD_RESOURCE_GROUP}" ]]; then
+          check_key_vault_role_for_identity "${PROD_IDENTITY_NAME}" "${PROD_RESOURCE_GROUP}" "${KV_ID}"
         else
-          warn "Prod Container App coordinates are unresolved (role check skipped)"
+          warn "Prod identity coordinates are unresolved (role check skipped)"
         fi
       fi
     fi
