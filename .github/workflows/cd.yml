@@ -239,6 +239,8 @@ jobs:
             --resource-group "${KV_RG}" \
             --ip-address "${RUNNER_IP}" >/dev/null
 
+          # Keep the same runner IP in Terraform-managed Key Vault firewall during this run.
+          echo "TF_VAR_key_vault_allowed_ip_cidrs=[\"${RUNNER_IP}/32\"]" >> "$GITHUB_ENV"
           echo "kv_name=${KV_NAME}" >> "$GITHUB_OUTPUT"
           echo "kv_rg=${KV_RG}" >> "$GITHUB_OUTPUT"
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
@@ -358,6 +360,8 @@ jobs:
             --resource-group "${KV_RG}" \
             --ip-address "${RUNNER_IP}" >/dev/null
 
+          # Keep the same runner IP in Terraform-managed Key Vault firewall during this run.
+          echo "TF_VAR_key_vault_allowed_ip_cidrs=[\"${RUNNER_IP}/32\"]" >> "$GITHUB_ENV"
           echo "kv_name=${KV_NAME}" >> "$GITHUB_OUTPUT"
           echo "kv_rg=${KV_RG}" >> "$GITHUB_OUTPUT"
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
@@ -472,6 +476,8 @@ jobs:
             --resource-group "${KV_RG}" \
             --ip-address "${RUNNER_IP}" >/dev/null
 
+          # Keep the same runner IP in Terraform-managed Key Vault firewall during this run.
+          echo "TF_VAR_key_vault_allowed_ip_cidrs=[\"${RUNNER_IP}/32\"]" >> "$GITHUB_ENV"
           echo "kv_name=${KV_NAME}" >> "$GITHUB_OUTPUT"
           echo "kv_rg=${KV_RG}" >> "$GITHUB_OUTPUT"
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"

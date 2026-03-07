@@ -83,3 +83,5 @@ Bootstrap note:
 - Keep dev/prod state isolated via backend keys.
 - Use `plan` before `apply`.
 - Manage secrets in Key Vault, not in Terraform variable files.
+- Use `destroy` only for full environment reset; normal deploy path is `plan` -> `apply`.
+- `apply` reconciles Terraform-managed resources only; unmanaged resources are not removed automatically.
