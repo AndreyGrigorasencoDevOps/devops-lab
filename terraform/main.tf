@@ -1,5 +1,12 @@
 locals {
   db_env_var_names = toset(["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"])
+  db_container_app_secret_name_by_env_var = {
+    DB_HOST     = "db-host"
+    DB_PORT     = "db-port"
+    DB_USER     = "db-user"
+    DB_PASSWORD = "db-password"
+    DB_NAME     = "db-name"
+  }
   db_kv_secret_name_by_env_var = {
     DB_HOST     = "${var.env}-db-host"
     DB_PORT     = "${var.env}-db-port"
@@ -20,8 +27,8 @@ locals {
   key_vault_id                 = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].id : azurerm_key_vault.main[0].id
   key_vault_name               = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].name : azurerm_key_vault.main[0].name
   reserved_app_env_var_names   = local.db_env_var_names
-  db_secret_id_by_name = merge(
-    { for secret_name, secret in azurerm_key_vault_secret.db_runtime : secret_name => secret.versionless_id },
+  db_secret_id_by_env_var = merge(
+    { for env_var_name, secret in azurerm_key_vault_secret.db_runtime : env_var_name => secret.versionless_id },
     { DB_PASSWORD = data.azurerm_key_vault_secret.db_password.versionless_id }
   )
   sanitized_app_env_vars = {
@@ -193,10 +200,10 @@ resource "azurerm_container_app" "main" {
   }
 
   dynamic "secret" {
-    for_each = local.db_secret_id_by_name
+    for_each = local.db_secret_id_by_env_var
     iterator = db_secret
     content {
-      name                = db_secret.key
+      name                = local.db_container_app_secret_name_by_env_var[db_secret.key]
       key_vault_secret_id = db_secret.value
       identity            = azurerm_user_assigned_identity.container_app.id
     }
@@ -214,7 +221,7 @@ resource "azurerm_container_app" "main" {
         iterator = db_env
         content {
           name        = db_env.value
-          secret_name = db_env.value
+          secret_name = local.db_container_app_secret_name_by_env_var[db_env.value]
         }
       }
 
