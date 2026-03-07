@@ -1,4 +1,13 @@
 locals {
+  db_env_var_names = toset(["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"])
+  db_kv_secret_name_by_env_var = {
+    DB_HOST     = "${var.env}-db-host"
+    DB_PORT     = "${var.env}-db-port"
+    DB_USER     = "${var.env}-db-user"
+    DB_PASSWORD = "${var.env}-db-password"
+    DB_NAME     = "${var.env}-db-name"
+  }
+
   tags = merge(
     {
       project = var.project
@@ -10,7 +19,11 @@ locals {
   container_app_environment_id = var.use_shared_cae ? data.azurerm_container_app_environment.shared[0].id : azurerm_container_app_environment.main[0].id
   key_vault_id                 = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].id : azurerm_key_vault.main[0].id
   key_vault_name               = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].name : azurerm_key_vault.main[0].name
-  reserved_app_env_var_names   = toset(["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"])
+  reserved_app_env_var_names   = local.db_env_var_names
+  db_secret_id_by_name = merge(
+    { for secret_name, secret in azurerm_key_vault_secret.db_runtime : secret_name => secret.versionless_id },
+    { DB_PASSWORD = data.azurerm_key_vault_secret.db_password.versionless_id }
+  )
   sanitized_app_env_vars = {
     for key, value in var.app_env_vars : key => value
     if !contains(local.reserved_app_env_var_names, key)
@@ -65,7 +78,7 @@ resource "azurerm_key_vault" "main" {
   resource_group_name           = azurerm_resource_group.main.name
   tenant_id                     = data.azurerm_client_config.current.tenant_id
   sku_name                      = "standard"
-  enable_rbac_authorization     = true
+  rbac_authorization_enabled    = true
   soft_delete_retention_days    = 7
   purge_protection_enabled      = false
   public_network_access_enabled = true
@@ -85,14 +98,14 @@ data "azurerm_key_vault" "shared" {
   resource_group_name = var.shared_key_vault_resource_group_name
 }
 
+data "azurerm_key_vault_secret" "db_password" {
+  name         = local.db_kv_secret_name_by_env_var["DB_PASSWORD"]
+  key_vault_id = local.key_vault_id
+}
+
 resource "random_string" "suffix" {
   length  = 6
   upper   = false
-  special = false
-}
-
-resource "random_password" "postgres_admin" {
-  length  = 24
   special = false
 }
 
@@ -105,13 +118,20 @@ resource "azurerm_container_registry" "main" {
   tags                = local.tags
 }
 
+resource "azurerm_user_assigned_identity" "container_app" {
+  name                = "${var.project}-${var.env}-ca-identity"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  tags                = local.tags
+}
+
 resource "azurerm_postgresql_flexible_server" "main" {
   name                          = "${var.project}-${var.env}-psql-${random_string.suffix.result}"
   resource_group_name           = azurerm_resource_group.main.name
   location                      = azurerm_resource_group.main.location
   version                       = var.postgres_server_version
   administrator_login           = var.postgres_admin_username
-  administrator_password        = random_password.postgres_admin.result
+  administrator_password        = data.azurerm_key_vault_secret.db_password.value
   sku_name                      = var.postgres_sku_name
   storage_mb                    = var.postgres_storage_mb
   backup_retention_days         = var.postgres_backup_retention_days
@@ -134,19 +154,47 @@ resource "azurerm_postgresql_flexible_server_database" "main" {
   collation = "en_US.utf8"
 }
 
+resource "azurerm_key_vault_secret" "db_runtime" {
+  for_each = {
+    DB_HOST = azurerm_postgresql_flexible_server.main.fqdn
+    DB_PORT = "5432"
+    DB_USER = azurerm_postgresql_flexible_server.main.administrator_login
+    DB_NAME = azurerm_postgresql_flexible_server_database.main.name
+  }
+
+  name         = local.db_kv_secret_name_by_env_var[each.key]
+  value        = each.value
+  key_vault_id = local.key_vault_id
+}
+
 resource "azurerm_container_app" "main" {
   name                         = "${var.project}-${var.env}-app"
   container_app_environment_id = local.container_app_environment_id
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
+  depends_on = [
+    azurerm_role_assignment.acr_pull,
+    azurerm_role_assignment.key_vault_secrets_user
+  ]
 
   identity {
-    type = "SystemAssigned"
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.container_app.id]
   }
 
   registry {
     server   = azurerm_container_registry.main.login_server
-    identity = "SystemAssigned"
+    identity = azurerm_user_assigned_identity.container_app.id
+  }
+
+  dynamic "secret" {
+    for_each = local.db_secret_id_by_name
+    iterator = db_secret
+    content {
+      name                = db_secret.key
+      key_vault_secret_id = db_secret.value
+      identity            = azurerm_user_assigned_identity.container_app.id
+    }
   }
 
   template {
@@ -156,29 +204,13 @@ resource "azurerm_container_app" "main" {
       cpu    = var.container_cpu
       memory = var.container_memory
 
-      env {
-        name  = "DB_HOST"
-        value = azurerm_postgresql_flexible_server.main.fqdn
-      }
-
-      env {
-        name  = "DB_PORT"
-        value = "5432"
-      }
-
-      env {
-        name  = "DB_USER"
-        value = azurerm_postgresql_flexible_server.main.administrator_login
-      }
-
-      env {
-        name  = "DB_PASSWORD"
-        value = random_password.postgres_admin.result
-      }
-
-      env {
-        name  = "DB_NAME"
-        value = azurerm_postgresql_flexible_server_database.main.name
+      dynamic "env" {
+        for_each = local.db_env_var_names
+        iterator = db_env
+        content {
+          name        = db_env.value
+          secret_name = db_env.value
+        }
       }
 
       dynamic "env" {
@@ -206,13 +238,15 @@ resource "azurerm_container_app" "main" {
 }
 
 resource "azurerm_role_assignment" "acr_pull" {
-  scope                = azurerm_container_registry.main.id
-  role_definition_name = "AcrPull"
-  principal_id         = azurerm_container_app.main.identity[0].principal_id
+  scope                            = azurerm_container_registry.main.id
+  role_definition_name             = "AcrPull"
+  principal_id                     = azurerm_user_assigned_identity.container_app.principal_id
+  skip_service_principal_aad_check = true
 }
 
 resource "azurerm_role_assignment" "key_vault_secrets_user" {
-  scope                = local.key_vault_id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_container_app.main.identity[0].principal_id
+  scope                            = local.key_vault_id
+  role_definition_name             = "Key Vault Secrets User"
+  principal_id                     = azurerm_user_assigned_identity.container_app.principal_id
+  skip_service_principal_aad_check = true
 }

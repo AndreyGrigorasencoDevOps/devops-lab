@@ -72,20 +72,53 @@ gh variable set TF_APP_ENV_VARS_JSON --repo <owner/repo> --env dev --body '{"NOD
 gh variable set TF_APP_ENV_VARS_JSON --repo <owner/repo> --env prod --body '{"NODE_ENV":"production"}'
 ```
 
-## 2.3 Database provisioning model
+## 2.3 Database + Key Vault model
 
-Database is now Terraform-managed:
+Current production-friendly model:
 
-- Terraform creates Azure Database for PostgreSQL Flexible Server.
-- Terraform creates the application database (`taskdb` by default).
-- Terraform injects required runtime variables into Container App automatically:
-  - `DB_HOST`
-  - `DB_PORT`
-  - `DB_USER`
-  - `DB_PASSWORD`
-  - `DB_NAME`
+- Terraform creates PostgreSQL server + application database.
+- Container App receives `DB_*` only via Key Vault references.
+- `DB_PASSWORD` is manual in Key Vault (source of truth), env-scoped:
+  - `dev-db-password`
+  - `prod-db-password`
+- Terraform creates/updates runtime Key Vault secrets:
+  - `<env>-db-host`
+  - `<env>-db-port`
+  - `<env>-db-user`
+  - `<env>-db-name`
 
-Manual DB secret creation in Key Vault is no longer required for first startup.
+One-time manual steps:
+
+1. Create DB password secrets in shared Key Vault.
+
+```bash
+az keyvault secret set \
+  --vault-name <shared_kv_name> \
+  --name dev-db-password \
+  --value "<strong_password_dev>"
+
+az keyvault secret set \
+  --vault-name <shared_kv_name> \
+  --name prod-db-password \
+  --value "<strong_password_prod>"
+```
+
+2. Grant Key Vault secret write/read rights to Terraform deploy identity (GitHub OIDC service principal for each environment):
+
+```bash
+az role assignment create \
+  --assignee <azure_client_id_for_env> \
+  --role "Key Vault Secrets Officer" \
+  --scope "/subscriptions/<sub_id>/resourceGroups/<kv_rg>/providers/Microsoft.KeyVault/vaults/<shared_kv_name>"
+```
+
+Notes:
+
+- Container App user-assigned identity gets `Key Vault Secrets User` from Terraform.
+- If a Key Vault is being created for the first time, run a one-time bootstrap:
+  1) create Key Vault (`terraform apply -target=azurerm_key_vault.main` for that env),
+  2) create `<env>-db-password`,
+  3) run full `plan/apply`.
 
 ## 3) Automated preflight check
 
@@ -102,7 +135,9 @@ Optional explicit inputs:
   --repo <owner/repo> \
   --project taskapi \
   --kv-name taskapi-shared-kv-uks \
-  --kv-rg taskapi-dev-rg-uks
+  --kv-rg taskapi-dev-rg-uks \
+  --dev-identity taskapi-dev-ca-identity \
+  --prod-identity taskapi-prod-ca-identity
 ```
 
 The script validates:
@@ -110,7 +145,9 @@ The script validates:
 - GitHub Sonar secret/variables
 - GitHub env variables (`dev` + `prod`)
 - shared Key Vault existence
-- `Key Vault Secrets User` role on Container App managed identities (dev/prod)
+- required secrets `dev-db-password`, `prod-db-password`
+- optional runtime secrets `<env>-db-host/port/user/name`
+- `Key Vault Secrets User` role on Container App user-assigned identities (dev/prod)
 
 ## 4) Execution sequence
 
@@ -141,8 +178,10 @@ gh workflow run cd.yml -f environment=prod -f action=apply -f image_tag=sha-<sho
 - [ ] `SONAR_TOKEN`, `SONAR_PROJECT`, `SONAR_ORG` configured in repository
 - [ ] `dev` environment variables configured
 - [ ] `prod` environment variables configured
+- [ ] Key Vault secrets `dev-db-password` and `prod-db-password` exist
+- [ ] Terraform deploy identity has `Key Vault Secrets Officer` on shared Key Vault
 - [ ] PostgreSQL server + application database are created by Terraform apply
-- [ ] Container App managed identities have `Key Vault Secrets User` on shared Key Vault
+- [ ] Container App user-assigned identities have `Key Vault Secrets User` on shared Key Vault
 - [ ] PR pipeline (`CI`) passed
 - [ ] Push pipeline (`CI Push`) passed
 - [ ] CD dev `plan/apply` passed with expected image tag

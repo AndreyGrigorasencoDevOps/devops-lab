@@ -58,7 +58,27 @@ CD workflow exports:
 - `TF_VAR_container_image_tag` (for plan/apply)
 - `TF_VAR_app_env_vars` (optional map from `TF_APP_ENV_VARS_JSON`)
 
-## 5) Notes
+## 5) Key Vault Contract for Database
+
+- Required manual secret before `plan/apply`:
+  - `<env>-db-password` (for each env, for example `dev-db-password`)
+- Terraform manages runtime DB metadata secrets in Key Vault:
+  - `<env>-db-host`
+  - `<env>-db-port`
+  - `<env>-db-user`
+  - `<env>-db-name`
+- Container App reads all `DB_*` via Key Vault secret references.
+
+Role requirements:
+
+- Terraform deploy identity: `Key Vault Secrets Officer`
+- Container App user-assigned identity: `Key Vault Secrets User`
+
+Bootstrap note:
+
+- If the Key Vault does not exist yet for an environment, create it first, then add `<env>-db-password`, then run full `plan/apply`.
+
+## 6) Notes
 
 - Keep dev/prod state isolated via backend keys.
 - Use `plan` before `apply`.

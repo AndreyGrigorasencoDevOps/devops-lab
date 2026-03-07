@@ -33,6 +33,11 @@ output "key_vault_name" {
   value       = local.key_vault_name
 }
 
+output "db_key_vault_secret_names" {
+  description = "Key Vault secret names used by Container App for DB_* runtime values."
+  value       = local.db_kv_secret_name_by_env_var
+}
+
 output "postgres_server_name" {
   description = "PostgreSQL flexible server name."
   value       = azurerm_postgresql_flexible_server.main.name
@@ -41,6 +46,16 @@ output "postgres_server_name" {
 output "postgres_fqdn" {
   description = "PostgreSQL flexible server hostname."
   value       = azurerm_postgresql_flexible_server.main.fqdn
+}
+
+output "postgres_port" {
+  description = "PostgreSQL server port."
+  value       = 5432
+}
+
+output "postgres_admin_username" {
+  description = "PostgreSQL flexible server administrator login."
+  value       = azurerm_postgresql_flexible_server.main.administrator_login
 }
 
 output "postgres_database_name" {

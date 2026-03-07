@@ -164,7 +164,7 @@ terraform -chdir=terraform plan -var-file=vars/dev.tfvars -var="container_image_
 
 ### Database wiring contract
 
-Terraform provisions PostgreSQL and injects these required runtime variables automatically:
+Terraform provisions PostgreSQL and configures Container App to load all DB variables from Key Vault secret references:
 
 - `DB_HOST`
 - `DB_PORT`
@@ -172,7 +172,12 @@ Terraform provisions PostgreSQL and injects these required runtime variables aut
 - `DB_PASSWORD`
 - `DB_NAME`
 
-Use Key Vault for other application secrets that are not provisioned by Terraform.
+Secret ownership model:
+
+- Manually managed in shared Key Vault: `<env>-db-password` (`dev-db-password`, `prod-db-password`)
+- Terraform-managed in shared Key Vault: `<env>-db-host`, `<env>-db-port`, `<env>-db-user`, `<env>-db-name`
+
+The Terraform deploy identity must have `Key Vault Secrets Officer` on the Key Vault scope.
 
 ## Scripts
 

@@ -28,8 +28,8 @@ L-- vars/
 - Shared-or-dedicated Container Apps Environment (CAE)
 - Shared-or-dedicated Key Vault
 - Role assignments:
-  - `AcrPull` for Container App managed identity
-  - `Key Vault Secrets User` for Container App managed identity
+  - `AcrPull` for Container App user-assigned identity
+  - `Key Vault Secrets User` for Container App user-assigned identity
 
 ## Environment model
 
@@ -98,7 +98,17 @@ Important Terraform variables:
   - `postgres_admin_username`
   - `postgres_database_name`
 
-Terraform provisions PostgreSQL and injects required `DB_*` environment values into Container App automatically.
+Terraform provisions PostgreSQL and configures Container App to read required `DB_*` values via Key Vault references.
+
+Key Vault DB contract:
+
+- Manual required secret:
+  - `<env>-db-password` (example: `dev-db-password`)
+- Terraform-managed secrets:
+  - `<env>-db-host`
+  - `<env>-db-port`
+  - `<env>-db-user`
+  - `<env>-db-name`
 
 ## CI/CD integration
 
@@ -122,6 +132,14 @@ Each GitHub environment (`dev`, `prod`) must define:
 ### Secrets
 
 - No Terraform secret input is required.
+
+Additional requirement:
+
+- The deploy identity running Terraform (GitHub OIDC app/service principal) must have `Key Vault Secrets Officer` on the Key Vault scope.
+- If Key Vault is created for the first time in an environment, bootstrap in two steps:
+  1) create Key Vault,
+  2) add `<env>-db-password`,
+  3) run full Terraform `plan/apply`.
 
 ## Notes
 
