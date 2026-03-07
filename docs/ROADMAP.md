@@ -120,6 +120,7 @@ Objective: make deployments predictable, auditable, and environment-aware.
 - [x] Post-refactor runbook + prereq checker script added
 - [x] State adoption step for existing Container App in CD apply path
 - [x] Phase 1 Key Vault stabilization mode in CD/Terraform (`public_allow`)
+- [x] Transitional KV bootstrap in CD when existing vault firewall is still `Deny`
 - [x] RBAC propagation wait before Container App revision updates
 - [x] Deprecated old tag-driven direct prod deployment flow
 - [ ] Environment protection rules review (required reviewers, prod safeguards)
