@@ -249,6 +249,40 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
 
+      - name: Adopt existing Container App into Terraform state (dev)
+        if: inputs.action == 'apply'
+        run: |
+          set -euo pipefail
+
+          extract_tfvar_string() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n 1
+          }
+
+          DEV_TFVARS="${{ env.TERRAFORM_DIR }}/vars/dev.tfvars"
+          PROJECT_NAME="$(sed -n '/variable "project"/,/}/s/.*default[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p' "${{ env.TERRAFORM_DIR }}/variables.tf" | head -n 1)"
+          ENV_NAME="$(extract_tfvar_string "${DEV_TFVARS}" "env")"
+          if [[ -z "${ENV_NAME}" ]]; then
+            ENV_NAME="dev"
+          fi
+
+          RG_NAME="${PROJECT_NAME}-${ENV_NAME}-rg-uks"
+          APP_NAME="${PROJECT_NAME}-${ENV_NAME}-app"
+          APP_ID="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.App/containerApps/${APP_NAME}"
+
+          if terraform -chdir=${{ env.TERRAFORM_DIR }} state show azurerm_container_app.main >/dev/null 2>&1; then
+            echo "Container App is already managed in Terraform state."
+            exit 0
+          fi
+
+          if az resource show --ids "${APP_ID}" >/dev/null 2>&1; then
+            echo "Found existing Container App ${APP_NAME}; importing into Terraform state."
+            terraform -chdir=${{ env.TERRAFORM_DIR }} import -var-file=vars/dev.tfvars azurerm_container_app.main "${APP_ID}"
+          else
+            echo "Container App ${APP_NAME} does not exist yet; no import required."
+          fi
+
       - name: Terraform plan/apply/destroy (dev)
         run: |
           set -euo pipefail
@@ -369,6 +403,40 @@ jobs:
 
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
+
+      - name: Adopt existing Container App into Terraform state (prod)
+        if: inputs.action == 'apply'
+        run: |
+          set -euo pipefail
+
+          extract_tfvar_string() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n 1
+          }
+
+          PROD_TFVARS="${{ env.TERRAFORM_DIR }}/vars/prod.tfvars"
+          PROJECT_NAME="$(sed -n '/variable "project"/,/}/s/.*default[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p' "${{ env.TERRAFORM_DIR }}/variables.tf" | head -n 1)"
+          ENV_NAME="$(extract_tfvar_string "${PROD_TFVARS}" "env")"
+          if [[ -z "${ENV_NAME}" ]]; then
+            ENV_NAME="prod"
+          fi
+
+          RG_NAME="${PROJECT_NAME}-${ENV_NAME}-rg-uks"
+          APP_NAME="${PROJECT_NAME}-${ENV_NAME}-app"
+          APP_ID="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.App/containerApps/${APP_NAME}"
+
+          if terraform -chdir=${{ env.TERRAFORM_DIR }} state show azurerm_container_app.main >/dev/null 2>&1; then
+            echo "Container App is already managed in Terraform state."
+            exit 0
+          fi
+
+          if az resource show --ids "${APP_ID}" >/dev/null 2>&1; then
+            echo "Found existing Container App ${APP_NAME}; importing into Terraform state."
+            terraform -chdir=${{ env.TERRAFORM_DIR }} import -var-file=vars/prod.tfvars azurerm_container_app.main "${APP_ID}"
+          else
+            echo "Container App ${APP_NAME} does not exist yet; no import required."
+          fi
 
       - name: Terraform plan/apply (prod)
         run: |
