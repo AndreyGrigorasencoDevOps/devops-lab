@@ -137,6 +137,11 @@ resource "azurerm_postgresql_flexible_server" "main" {
   backup_retention_days         = var.postgres_backup_retention_days
   public_network_access_enabled = var.postgres_public_network_access_enabled
   tags                          = local.tags
+
+  # Existing servers may have an auto-selected zone; Azure doesn't allow arbitrary zone updates in-place.
+  lifecycle {
+    ignore_changes = [zone]
+  }
 }
 
 resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure_services" {
