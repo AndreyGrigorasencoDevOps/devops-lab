@@ -89,6 +89,11 @@ Important Terraform variables:
 - `shared_key_vault_name`
 - `shared_key_vault_resource_group_name`
 - `app_env_vars` (non-sensitive map)
+- Key Vault network policy:
+  - `key_vault_network_mode` (`public_allow` for Phase 1, `firewall` for Phase 2)
+  - `key_vault_allowed_ip_cidrs` (used when mode is `firewall`)
+  - `key_vault_allowed_subnet_ids` (used when mode is `firewall`)
+- `rbac_propagation_wait_seconds` (delay before Container App revision update after role assignments)
 - PostgreSQL variables:
   - `postgres_server_version`
   - `postgres_sku_name`
@@ -143,6 +148,7 @@ Each GitHub environment (`dev`, `prod`) must define:
 Additional requirement:
 
 - The deploy identity running Terraform (GitHub OIDC app/service principal) must have `Key Vault Secrets Officer` on the Key Vault scope.
+- `Key Vault Contributor` is optional in current Phase 1 (`public_allow`) and required only when firewall automation mode is used.
 - If Key Vault is created for the first time in an environment, bootstrap in two steps:
   1) create Key Vault,
   2) add `<env>-db-password`,
@@ -152,3 +158,4 @@ Additional requirement:
 
 - `destroy` is available for both `dev` and `prod` in manual CD workflow.
 - State keys and naming conventions are preserved to avoid accidental resource replacement.
+- Current stabilization mode is `RBAC-only + public allow` for Key Vault; private access hardening is a later phase.

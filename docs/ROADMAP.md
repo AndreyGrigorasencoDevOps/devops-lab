@@ -88,6 +88,7 @@ Objective: provision and evolve infra from code, not manual clicks.
 - [x] Core resources managed in Terraform:
   - Resource Group
   - ACR
+  - PostgreSQL Flexible Server + application database
   - Container App
   - Log Analytics Workspace
   - Shared-or-dedicated CAE model
@@ -117,9 +118,12 @@ Objective: make deployments predictable, auditable, and environment-aware.
 - [x] PROD digest promotion from DEV ACR before Terraform plan/apply
 - [x] CD summary for execution context and selected backend/tfvars
 - [x] Post-refactor runbook + prereq checker script added
+- [x] State adoption step for existing Container App in CD apply path
+- [x] Phase 1 Key Vault stabilization mode in CD/Terraform (`public_allow`)
+- [x] RBAC propagation wait before Container App revision updates
 - [x] Deprecated old tag-driven direct prod deployment flow
 - [ ] Environment protection rules review (required reviewers, prod safeguards)
-- [ ] Policy decision: keep or restrict `prod destroy` path
+- [x] Policy decision recorded: keep `prod destroy` path (manual, explicit reset only)
 
 Outcome:
 Deployments are controlled, traceable, and safer across environments.
@@ -179,6 +183,8 @@ Objective: move from baseline security to production-grade identity model.
 - [x] OIDC authentication from GitHub Actions to Azure
 - [x] Managed identity + RBAC pattern for runtime services
 - [x] Key Vault integration baseline introduced
+- [x] Phase 1 secret-resolution stabilization documented (`RBAC-only + public allow`)
+- [ ] Phase 2 migration to private Key Vault + self-hosted runner in VNet
 - [ ] Secret rotation runbook and ownership model
 - [ ] Access review cadence for CI/runtime/human identities
 - [ ] Add stronger policy checks (least privilege verification)

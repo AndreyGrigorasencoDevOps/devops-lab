@@ -18,7 +18,10 @@ This runbook covers the Sonar restore, CI split, and post-refactor operational c
   - Docker smoke test
   - build/push immutable image `sha-<short_sha>` to DEV ACR + digest verify
 - `CD` workflow (`.github/workflows/cd.yml`) remains manual (`workflow_dispatch`) and uses Terraform for `plan|apply|destroy`.
-- During Terraform jobs, CD temporarily adds runner public IP to Key Vault firewall and removes it in a cleanup step.
+- CD now exports Terraform runtime vars for Key Vault mode and RBAC stabilization:
+  - `TF_VAR_key_vault_network_mode` (Phase 1 default: `public_allow`)
+  - `TF_VAR_rbac_propagation_wait_seconds` (default: `45`)
+- Runner-IP firewall allowlist steps exist in workflow for future hardening mode (`firewall`) but are disabled in current Phase 1 mode.
 
 ## 1.1 CD reconcile policy
 
@@ -39,6 +42,20 @@ Plan interpretation:
 - `-/+ replace`: resource will be destroyed and recreated.
 - `- destroy` during `apply`: managed resource no longer in config and will be removed from infra.
 - Resources created outside Terraform state are not removed by `apply`.
+
+## 1.2 Two-phase Key Vault operating model
+
+Current mode (Phase 1, active):
+
+- Key Vault access model: `RBAC-only + public allow`.
+- Goal: stable deploys from GitHub-hosted runners and reliable Container App secret resolution.
+- Terraform includes a deterministic RBAC propagation wait before Container App revision updates.
+
+Target mode (Phase 2, planned):
+
+- Self-hosted GitHub runner in Azure VNet for Terraform/CD jobs.
+- Key Vault private access model (`firewall` + private endpoint + private DNS).
+- Split Key Vault per environment (dev/prod), while CAE stays shared due trial limits.
 
 ## 2) One-time manual setup
 
@@ -133,7 +150,7 @@ az role assignment create \
   --scope "/subscriptions/<sub_id>/resourceGroups/<kv_rg>/providers/Microsoft.KeyVault/vaults/<shared_kv_name>"
 ```
 
-3. Grant management-plane rights to modify Key Vault firewall rules (required for GitHub-hosted runners in CD):
+3. (Optional, firewall mode only) Grant management-plane rights to modify Key Vault firewall rules:
 
 ```bash
 az role assignment create \
@@ -145,6 +162,7 @@ az role assignment create \
 Notes:
 
 - Container App user-assigned identity gets `Key Vault Secrets User` from Terraform.
+- `Key Vault Contributor` is optional in current Phase 1 (`public_allow`). Keep it for future `firewall` mode or if you intentionally enable firewall automation.
 - If a Key Vault is being created for the first time, run a one-time bootstrap:
   1) create Key Vault (`terraform apply -target=azurerm_key_vault.main` for that env),
   2) create `<env>-db-password`,
@@ -214,7 +232,7 @@ gh workflow run cd.yml -f environment=prod -f action=apply -f image_tag=sha-<sho
 - [ ] `prod` environment variables configured
 - [ ] Key Vault secrets `dev-db-password` and `prod-db-password` exist
 - [ ] Terraform deploy identity has `Key Vault Secrets Officer` on shared Key Vault
-- [ ] Terraform deploy identity has Key Vault management-plane rights (`Key Vault Contributor`) for firewall allowlist automation
+- [ ] (Optional in Phase 1) Terraform deploy identity has `Key Vault Contributor` for firewall allowlist automation
 - [ ] PostgreSQL server + application database are created by Terraform apply
 - [ ] Container App user-assigned identities have `Key Vault Secrets User` on shared Key Vault
 - [ ] PR pipeline (`CI`) passed
@@ -223,7 +241,16 @@ gh workflow run cd.yml -f environment=prod -f action=apply -f image_tag=sha-<sho
 - [ ] CD prod `plan/apply` passed with digest promotion
 - [ ] `/health` and `/ready` checks passed in both environments
 
-## 7) Validation scenarios
+## 7) Phase 2 migration checklist (private Key Vault + self-hosted runner)
+
+- [ ] Provision self-hosted GitHub runner in Azure VNet and register runner labels.
+- [ ] Create dedicated dev/prod Key Vaults and migrate secrets from shared vault.
+- [ ] Add Key Vault private endpoints and private DNS linkage for runner/ACA path.
+- [ ] Switch `key_vault_network_mode` to `firewall` in Terraform vars.
+- [ ] Update `cd.yml` Terraform jobs to run on self-hosted runner labels.
+- [ ] Re-run `dev plan/apply`, then `prod plan/apply`, and verify app secret resolution.
+
+## 8) Validation scenarios
 
 1. Add or modify a managed resource parameter, run `plan`, confirm `create/update`, then `apply` succeeds.
 2. Remove a managed resource from Terraform config, run `plan`, confirm `destroy`, then `apply` removes only that managed resource.
