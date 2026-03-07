@@ -26,6 +26,7 @@ locals {
   container_app_environment_id = var.use_shared_cae ? data.azurerm_container_app_environment.shared[0].id : azurerm_container_app_environment.main[0].id
   key_vault_id                 = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].id : azurerm_key_vault.main[0].id
   key_vault_name               = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].name : azurerm_key_vault.main[0].name
+  key_vault_firewall_enabled   = var.key_vault_network_mode == "firewall"
   reserved_app_env_var_names   = local.db_env_var_names
   db_secret_id_by_env_var = merge(
     { for env_var_name, secret in azurerm_key_vault_secret.db_runtime : env_var_name => secret.versionless_id },
@@ -93,9 +94,9 @@ resource "azurerm_key_vault" "main" {
 
   network_acls {
     bypass                     = "AzureServices"
-    default_action             = "Deny"
-    ip_rules                   = var.key_vault_allowed_ip_cidrs
-    virtual_network_subnet_ids = var.key_vault_allowed_subnet_ids
+    default_action             = local.key_vault_firewall_enabled ? "Deny" : "Allow"
+    ip_rules                   = local.key_vault_firewall_enabled ? var.key_vault_allowed_ip_cidrs : []
+    virtual_network_subnet_ids = local.key_vault_firewall_enabled ? var.key_vault_allowed_subnet_ids : []
   }
 }
 
@@ -185,8 +186,7 @@ resource "azurerm_container_app" "main" {
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
   depends_on = [
-    azurerm_role_assignment.acr_pull,
-    azurerm_role_assignment.key_vault_secrets_user
+    terraform_data.rbac_propagation
   ]
 
   identity {
@@ -261,4 +261,15 @@ resource "azurerm_role_assignment" "key_vault_secrets_user" {
   role_definition_name             = "Key Vault Secrets User"
   principal_id                     = azurerm_user_assigned_identity.container_app.principal_id
   skip_service_principal_aad_check = true
+}
+
+resource "terraform_data" "rbac_propagation" {
+  triggers_replace = [
+    azurerm_role_assignment.acr_pull.id,
+    azurerm_role_assignment.key_vault_secrets_user.id
+  ]
+
+  provisioner "local-exec" {
+    command = "sleep ${var.rbac_propagation_wait_seconds}"
+  }
 }

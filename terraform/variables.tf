@@ -165,3 +165,27 @@ variable "key_vault_allowed_subnet_ids" {
   description = "Subnet IDs allowed to reach Key Vault when firewall is enabled."
   default     = []
 }
+
+variable "key_vault_network_mode" {
+  type        = string
+  description = "Key Vault network mode: public_allow (Phase 1) or firewall (Phase 2 hardening)."
+  default     = "public_allow"
+  validation {
+    condition     = contains(["public_allow", "firewall"], var.key_vault_network_mode)
+    error_message = "key_vault_network_mode must be one of: public_allow, firewall."
+  }
+}
+
+variable "rbac_propagation_wait_seconds" {
+  type        = number
+  description = "Wait time before Container App update to reduce RBAC propagation race conditions."
+  default     = 45
+  validation {
+    condition = (
+      var.rbac_propagation_wait_seconds >= 0 &&
+      var.rbac_propagation_wait_seconds <= 600 &&
+      var.rbac_propagation_wait_seconds == floor(var.rbac_propagation_wait_seconds)
+    )
+    error_message = "rbac_propagation_wait_seconds must be an integer between 0 and 600."
+  }
+}
