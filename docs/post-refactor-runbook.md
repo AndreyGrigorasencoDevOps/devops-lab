@@ -18,6 +18,7 @@ This runbook covers the Sonar restore, CI split, and post-refactor operational c
   - Docker smoke test
   - build/push immutable image `sha-<short_sha>` to DEV ACR + digest verify
 - `CD` workflow (`.github/workflows/cd.yml`) remains manual (`workflow_dispatch`) and uses Terraform for `plan|apply|destroy`.
+- During Terraform jobs, CD temporarily adds runner public IP to Key Vault firewall and removes it in a cleanup step.
 
 ## 2) One-time manual setup
 
@@ -112,6 +113,15 @@ az role assignment create \
   --scope "/subscriptions/<sub_id>/resourceGroups/<kv_rg>/providers/Microsoft.KeyVault/vaults/<shared_kv_name>"
 ```
 
+3. Grant management-plane rights to modify Key Vault firewall rules (required for GitHub-hosted runners in CD):
+
+```bash
+az role assignment create \
+  --assignee <azure_client_id_for_env> \
+  --role "Key Vault Contributor" \
+  --scope "/subscriptions/<sub_id>/resourceGroups/<kv_rg>/providers/Microsoft.KeyVault/vaults/<shared_kv_name>"
+```
+
 Notes:
 
 - Container App user-assigned identity gets `Key Vault Secrets User` from Terraform.
@@ -180,6 +190,7 @@ gh workflow run cd.yml -f environment=prod -f action=apply -f image_tag=sha-<sho
 - [ ] `prod` environment variables configured
 - [ ] Key Vault secrets `dev-db-password` and `prod-db-password` exist
 - [ ] Terraform deploy identity has `Key Vault Secrets Officer` on shared Key Vault
+- [ ] Terraform deploy identity has Key Vault management-plane rights (`Key Vault Contributor`) for firewall allowlist automation
 - [ ] PostgreSQL server + application database are created by Terraform apply
 - [ ] Container App user-assigned identities have `Key Vault Secrets User` on shared Key Vault
 - [ ] PR pipeline (`CI`) passed
