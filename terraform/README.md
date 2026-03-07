@@ -116,6 +116,13 @@ Key Vault DB contract:
 - CD receives `image_tag` and runs Terraform `plan|apply|destroy`.
 - For PROD `plan/apply`, CD promotes the image from DEV ACR to PROD ACR by digest before Terraform.
 
+CD action semantics:
+
+- Use `plan` + `apply` for normal reconciliation.
+- `apply` creates missing managed resources, updates drift, and performs replacement when required.
+- `destroy` is a full environment reset for the selected Terraform state, not partial cleanup.
+- Resources created outside Terraform state are not removed by `apply`.
+
 ## GitHub environment configuration
 
 Each GitHub environment (`dev`, `prod`) must define:

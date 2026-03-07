@@ -136,6 +136,8 @@ Behavior:
 - Terraform is the deployment engine for both environments.
 - For `prod` plan/apply, the workflow promotes the image from DEV ACR to PROD ACR by digest before Terraform.
 - `destroy` is available for both `dev` and `prod` (manual use only).
+- Normal release flow is `plan` then `apply` (reconciliation).
+- `destroy` is full state teardown for the selected environment, not selective cleanup.
 
 ## Terraform Quick Start
 

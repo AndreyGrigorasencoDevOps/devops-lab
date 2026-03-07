@@ -20,6 +20,26 @@ This runbook covers the Sonar restore, CI split, and post-refactor operational c
 - `CD` workflow (`.github/workflows/cd.yml`) remains manual (`workflow_dispatch`) and uses Terraform for `plan|apply|destroy`.
 - During Terraform jobs, CD temporarily adds runner public IP to Key Vault firewall and removes it in a cleanup step.
 
+## 1.1 CD reconcile policy
+
+Operational intent:
+
+- Standard deploy/sync uses `action=plan` then `action=apply`.
+- `action=apply` is the reconcile operation:
+  - creates resources missing from infra/state
+  - updates drifted/outdated managed resources
+  - replaces resources when Terraform marks them `-/+` (ForceNew cases)
+  - destroys managed resources removed from Terraform configuration
+- `action=destroy` is a full environment reset for that state, not partial cleanup.
+
+Plan interpretation:
+
+- `+ create`: resource will be created.
+- `~ update`: resource will be updated in-place.
+- `-/+ replace`: resource will be destroyed and recreated.
+- `- destroy` during `apply`: managed resource no longer in config and will be removed from infra.
+- Resources created outside Terraform state are not removed by `apply`.
+
 ## 2) One-time manual setup
 
 ## 2.1 Repo-level Sonar configuration
@@ -164,12 +184,16 @@ The script validates:
 1. Open/update PR to `main` and confirm `CI` workflow passes.
 2. Merge to `main` and confirm `CI Push` passes.
 3. Capture `image_tag` (`sha-<short_sha>`) from CI Push summary.
-4. Run CD `dev plan`, then `dev apply` with that `image_tag`.
-5. Validate runtime:
+4. Run CD `dev plan` with that `image_tag` and review for unexpected `destroy/replace` on critical resources.
+5. Run CD `dev apply` with the same `image_tag`.
+6. Validate runtime:
    - `GET /health` returns 200
    - `GET /ready` returns 200
-6. Run CD `prod plan`, then `prod apply` with same `image_tag`.
-7. Re-check `/health` and `/ready` in prod.
+7. Run CD `prod plan` with the same `image_tag` and review diff.
+8. Run CD `prod apply` with the same `image_tag`.
+9. Re-check `/health` and `/ready` in prod.
+
+Use `destroy` only for intentional full reset (dev/prod), not as part of normal release flow.
 
 ## 5) CD commands (GitHub CLI)
 
@@ -198,3 +222,10 @@ gh workflow run cd.yml -f environment=prod -f action=apply -f image_tag=sha-<sho
 - [ ] CD dev `plan/apply` passed with expected image tag
 - [ ] CD prod `plan/apply` passed with digest promotion
 - [ ] `/health` and `/ready` checks passed in both environments
+
+## 7) Validation scenarios
+
+1. Add or modify a managed resource parameter, run `plan`, confirm `create/update`, then `apply` succeeds.
+2. Remove a managed resource from Terraform config, run `plan`, confirm `destroy`, then `apply` removes only that managed resource.
+3. Change a ForceNew parameter, run `plan`, confirm `-/+ replace`, then `apply` recreates resource successfully.
+4. Run `destroy` only as explicit reset and verify it is never used in normal release sequence.
