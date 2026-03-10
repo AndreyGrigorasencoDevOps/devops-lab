@@ -26,15 +26,17 @@ L-- vars/
 - Azure Database for PostgreSQL Flexible Server (+ application database)
 - Azure Container App
 - Shared-or-dedicated Container Apps Environment (CAE)
-- Shared-or-dedicated Key Vault
+- Dedicated Key Vault per environment
+- Key Vault private endpoint + private DNS zone group
+- Shared runner infrastructure (VNet, subnets, NSG, Linux VM, private DNS zone + link)
 - Role assignments:
   - `AcrPull` for Container App user-assigned identity
   - `Key Vault Secrets User` for Container App user-assigned identity
 
 ## Environment model
 
-- `dev` creates CAE and Key Vault (shared resources).
-- `prod` uses shared CAE and shared Key Vault via data sources.
+- `dev` creates CAE, dedicated dev Key Vault, and shared runner infrastructure.
+- `prod` uses shared CAE, creates dedicated prod Key Vault, and reuses shared runner network assets from dev.
 - Both environments keep isolated Terraform state keys:
   - `dev.terraform.tfstate`
   - `prod.terraform.tfstate`
@@ -86,13 +88,22 @@ Important Terraform variables:
 - `shared_cae_name`
 - `shared_cae_resource_group_name`
 - `use_shared_key_vault`
-- `shared_key_vault_name`
-- `shared_key_vault_resource_group_name`
+- `key_vault_name`
 - `app_env_vars` (non-sensitive map)
 - Key Vault network policy:
-  - `key_vault_network_mode` (`public_allow` for Phase 1, `firewall` for Phase 2)
+  - `key_vault_network_mode` (`firewall` in current Phase 2)
+  - `key_vault_private_endpoint_enabled`
   - `key_vault_allowed_ip_cidrs` (used when mode is `firewall`)
   - `key_vault_allowed_subnet_ids` (used when mode is `firewall`)
+- Shared runner platform:
+  - `enable_shared_runner_platform`
+  - `shared_runner_resource_group_name`
+  - `shared_runner_vnet_name`
+  - `shared_runner_subnet_name`
+  - `shared_runner_private_endpoints_subnet_name`
+  - `shared_runner_private_dns_zone_name`
+  - `shared_runner_admin_ssh_public_key`
+  - `shared_runner_labels`
 - `rbac_propagation_wait_seconds` (delay before Container App revision update after role assignments)
 - PostgreSQL variables:
   - `postgres_server_version`
@@ -105,7 +116,7 @@ Important Terraform variables:
 
 Terraform provisions PostgreSQL and configures Container App to read required `DB_*` values via Key Vault references.
 
-Key Vault DB contract:
+Key Vault DB contract (per environment):
 
 - Manual required secret:
   - `<env>-db-password` (example: `dev-db-password`)
@@ -140,6 +151,7 @@ Each GitHub environment (`dev`, `prod`) must define:
 - `ACR_NAME`
 - `ACR_LOGIN_SERVER`
 - `TF_APP_ENV_VARS_JSON` (optional JSON map, example: `{"NODE_ENV":"production"}`)
+- `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY` (required for runner VM create/update)
 
 ### Secrets
 
@@ -147,9 +159,9 @@ Each GitHub environment (`dev`, `prod`) must define:
 
 Additional requirement:
 
-- The deploy identity running Terraform (GitHub OIDC app/service principal) must have `Key Vault Secrets Officer` on the Key Vault scope.
-- `Key Vault Contributor` is optional in current Phase 1 (`public_allow`) and required only when firewall automation mode is used.
-- If Key Vault is created for the first time in an environment, bootstrap in two steps:
+- The deploy identity running Terraform (GitHub OIDC app/service principal) must have `Key Vault Secrets Officer` on the target env Key Vault scope.
+- Runtime identity (`<project>-<env>-ca-identity`) must have `Key Vault Secrets User` on the same env Key Vault scope.
+- If Key Vault is created for the first time in an environment, bootstrap in three steps:
   1) create Key Vault,
   2) add `<env>-db-password`,
   3) run full Terraform `plan/apply`.
@@ -158,4 +170,4 @@ Additional requirement:
 
 - `destroy` is available for both `dev` and `prod` in manual CD workflow.
 - State keys and naming conventions are preserved to avoid accidental resource replacement.
-- Current stabilization mode is `RBAC-only + public allow` for Key Vault; private access hardening is a later phase.
+- Phase 2 hardening is active: dedicated env Key Vaults + self-hosted runner in VNet + private endpoint path.

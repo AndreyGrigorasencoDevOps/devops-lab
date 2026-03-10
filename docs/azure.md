@@ -14,6 +14,7 @@ Required per GitHub environment (`dev`, `prod`):
 - `ACR_NAME`
 - `ACR_LOGIN_SERVER`
 - Optional: `TF_APP_ENV_VARS_JSON`
+- `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY` (for shared runner VM bootstrap/update)
 
 Use Azure login step in workflows:
 
@@ -37,7 +38,9 @@ Database + Key Vault model:
 
 - PostgreSQL server and app database are created by Terraform.
 - Container App reads all `DB_*` values from Key Vault references.
-- `DB_PASSWORD` is manual in Key Vault as `<env>-db-password`.
+- Dedicated Key Vault per environment (`taskapi-dev-kv-uks`, `taskapi-prod-kv-uks`).
+- Key Vault network mode is `firewall` + private endpoint path for CD runner network.
+- `DB_PASSWORD` is manual in env Key Vault as `<env>-db-password`.
 - Terraform writes/updates:
   - `<env>-db-host`
   - `<env>-db-port`
@@ -108,8 +111,9 @@ az role assignment list \
 
 1. PR checks pass in `ci.yml`.
 2. Push to `main` produces image artifact in `ci-push.yml`.
-3. CD (`cd.yml`) runs `plan` then `apply` for target environment.
-4. Validate `/health` and `/ready` on deployed app.
+3. CD (`cd.yml`) runs preflight (`check-post-refactor-prereqs.sh`) before `plan/apply`.
+4. CD runs `plan` then `apply` for target environment.
+5. Validate `/health` and `/ready` on deployed app.
 
 Detailed steps:
 

@@ -71,7 +71,9 @@ Examples:
 - `taskapi-dev-rg-uks`
 - `taskapi-prod-rg-uks`
 - `taskapi-dev-cae-uks`
-- `taskapi-shared-kv-uks`
+- `taskapi-dev-kv-uks`
+- `taskapi-prod-kv-uks`
+- `taskapi-shared-runner-vnet-uks`
 
 Notes:
 
@@ -83,19 +85,17 @@ Notes:
 ## 5. Current Architecture (March 2026)
 
 ```text
-GitHub Actions (CI + CI Push + CD manual)
+GitHub Actions (manual CD)
             |
             v
-      Azure Container Registry (DEV/PROD)
+Self-hosted Runner (VNet, private DNS)
             |
             v
-  Azure Container Apps (dev/prod runtime)
+Terraform + Azure API
             |
-            v
-      Azure Key Vault (shared pattern)
-            ^
-            |
-         Terraform
+            +--> Azure Container Registry (DEV/PROD)
+            +--> Azure Container Apps (dev/prod runtime)
+            +--> Azure Key Vault (dedicated per env + private endpoint)
 ```
 
 Managed by Terraform:
@@ -106,7 +106,10 @@ Managed by Terraform:
 - Azure Container Registry
 - Azure Database for PostgreSQL Flexible Server (+ app database)
 - Azure Container App
-- Key Vault (shared or dedicated mode)
+- Key Vault (dedicated per environment)
+- Key Vault private endpoint + private DNS zone group
+- Shared runner VNet + runner/PE subnets + NSG + Linux VM runner
+- Shared private DNS zone `privatelink.vaultcore.azure.net` + VNet link
 - RBAC assignments (`AcrPull`, `Key Vault Secrets User`)
 
 ---
@@ -115,7 +118,8 @@ Managed by Terraform:
 
 - GitHub -> Azure auth via OIDC (no long-lived cloud credentials in repo).
 - Runtime access via Managed Identity.
-- Key Vault used for secret management contract.
+- Key Vault firewall mode (`Deny`) with private endpoint access path from runner network.
+- Pragmatic runtime compatibility mode: Key Vault `bypass = AzureServices` remains enabled until CAE VNet migration.
 - Principle of least privilege enforced through RBAC assignments.
 
 Database secret contract:
@@ -141,6 +145,7 @@ Ownership:
 - CI/CD runbooks:
   - `docs/post-refactor-runbook.md`
   - `scripts/check-post-refactor-prereqs.sh`
+- CD preflight gate validates Key Vault/RBAC/runner prerequisites before `plan/apply`.
 - Terraform operation guide:
   - `terraform/README.md`
 

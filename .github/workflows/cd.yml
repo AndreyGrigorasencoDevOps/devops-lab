@@ -163,9 +163,10 @@ jobs:
     name: Terraform dev
     if: inputs.environment == 'dev'
     needs: [validate-inputs]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
     environment: dev
     permissions:
+      actions: read
       contents: read
       id-token: write
     env:
@@ -174,8 +175,8 @@ jobs:
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
-      KV_NETWORK_MODE: public_allow
       RBAC_PROPAGATION_WAIT_SECONDS: "45"
+      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -193,7 +194,6 @@ jobs:
       - name: Export Terraform variables
         run: |
           set -euo pipefail
-          echo "TF_VAR_key_vault_network_mode=${KV_NETWORK_MODE}" >> "$GITHUB_ENV"
           echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
 
           if [[ "${{ inputs.action }}" != "destroy" ]]; then
@@ -204,69 +204,20 @@ jobs:
             echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
           fi
 
-      - name: Allow runner IP in Key Vault firewall (dev)
-        id: kv_firewall_dev
+          if [[ -n "$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" ]]; then
+            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
+          fi
+
+      - name: Preflight security checks (dev)
+        if: inputs.action != 'destroy'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-
-          extract_tfvar_string() {
-            local file="$1"
-            local key="$2"
-            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n 1
-          }
-
-          DEV_TFVARS="${{ env.TERRAFORM_DIR }}/vars/dev.tfvars"
-          PROJECT_NAME="$(sed -n '/variable "project"/,/}/s/.*default[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p' "${{ env.TERRAFORM_DIR }}/variables.tf" | head -n 1)"
-          ENV_NAME="$(extract_tfvar_string "${DEV_TFVARS}" "env")"
-          if [[ -z "${ENV_NAME}" ]]; then
-            ENV_NAME="dev"
-          fi
-
-          KV_NAME="$(extract_tfvar_string "${DEV_TFVARS}" "shared_key_vault_name")"
-          if [[ -z "${KV_NAME}" ]]; then
-            KV_NAME="$(extract_tfvar_string "${DEV_TFVARS}" "key_vault_name")"
-          fi
-          if [[ -z "${KV_NAME}" ]]; then
-            KV_NAME="${PROJECT_NAME}-${ENV_NAME}-kv-uks"
-          fi
-
-          KV_ID="$(az keyvault show --name "${KV_NAME}" --query id -o tsv 2>/dev/null || true)"
-          if [[ -z "${KV_ID}" ]]; then
-            echo "Key Vault ${KV_NAME} not found yet; skipping firewall bootstrap."
-            echo "kv_name=" >> "$GITHUB_OUTPUT"
-            echo "kv_rg=" >> "$GITHUB_OUTPUT"
-            echo "runner_ip=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          KV_DEFAULT_ACTION="$(az keyvault show --name "${KV_NAME}" --query properties.networkAcls.defaultAction -o tsv 2>/dev/null || true)"
-          if [[ "${KV_NETWORK_MODE}" != "firewall" && "${KV_DEFAULT_ACTION}" != "Deny" ]]; then
-            echo "KV firewall bootstrap not required (mode=${KV_NETWORK_MODE}, defaultAction=${KV_DEFAULT_ACTION:-n/a})."
-            echo "kv_name=" >> "$GITHUB_OUTPUT"
-            echo "kv_rg=" >> "$GITHUB_OUTPUT"
-            echo "runner_ip=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          KV_RG="$(printf '%s' "${KV_ID}" | awk -F/ '{for (i=1; i<=NF; i++) if ($i=="resourceGroups") {print $(i+1); exit}}')"
-          RUNNER_IP="$(curl -fsS https://api.ipify.org || curl -fsS https://ifconfig.me || true)"
-
-          if [[ -z "${KV_RG}" || -z "${RUNNER_IP}" ]]; then
-            echo "::error::Unable to resolve Key Vault resource group or runner IP."
-            exit 1
-          fi
-
-          az keyvault network-rule add \
-            --name "${KV_NAME}" \
-            --resource-group "${KV_RG}" \
-            --ip-address "${RUNNER_IP}" >/dev/null
-
-          # Keep the same runner IP in Terraform-managed Key Vault firewall during this run.
-          echo "TF_VAR_key_vault_allowed_ip_cidrs=[\"${RUNNER_IP}/32\"]" >> "$GITHUB_ENV"
-          echo "kv_name=${KV_NAME}" >> "$GITHUB_OUTPUT"
-          echo "kv_rg=${KV_RG}" >> "$GITHUB_OUTPUT"
-          echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
-          echo "Added runner IP ${RUNNER_IP} to Key Vault ${KV_NAME} firewall."
+          ./scripts/check-post-refactor-prereqs.sh \
+            --environment "dev" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --strict-runner
 
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
@@ -279,7 +230,7 @@ jobs:
           extract_tfvar_string() {
             local file="$1"
             local key="$2"
-            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n 1
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" "${file}" | head -n 1
           }
 
           DEV_TFVARS="${{ env.TERRAFORM_DIR }}/vars/dev.tfvars"
@@ -325,31 +276,14 @@ jobs:
               ;;
           esac
 
-      - name: Remove runner IP from Key Vault firewall (dev)
-        if: always()
-        run: |
-          set -euo pipefail
-          KV_NAME="${{ steps.kv_firewall_dev.outputs.kv_name }}"
-          KV_RG="${{ steps.kv_firewall_dev.outputs.kv_rg }}"
-          RUNNER_IP="${{ steps.kv_firewall_dev.outputs.runner_ip }}"
-
-          if [[ -n "${KV_NAME}" && -n "${KV_RG}" && -n "${RUNNER_IP}" ]]; then
-            az keyvault network-rule remove \
-              --name "${KV_NAME}" \
-              --resource-group "${KV_RG}" \
-              --ip-address "${RUNNER_IP}" >/dev/null || true
-            echo "Removed runner IP ${RUNNER_IP} from Key Vault ${KV_NAME} firewall."
-          else
-            echo "Skipping Key Vault firewall cleanup because step outputs are empty."
-          fi
-
   terraform-prod:
     name: Terraform prod (plan/apply)
     if: inputs.environment == 'prod' && inputs.action != 'destroy'
     needs: [validate-inputs, promote-prod-image]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
     environment: prod
     permissions:
+      actions: read
       contents: read
       id-token: write
     env:
@@ -358,8 +292,8 @@ jobs:
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
-      KV_NETWORK_MODE: public_allow
       RBAC_PROPAGATION_WAIT_SECONDS: "45"
+      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -377,7 +311,6 @@ jobs:
       - name: Export Terraform variables
         run: |
           set -euo pipefail
-          echo "TF_VAR_key_vault_network_mode=${KV_NETWORK_MODE}" >> "$GITHUB_ENV"
           echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
           echo "TF_VAR_container_image_tag=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
 
@@ -385,64 +318,19 @@ jobs:
             echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
           fi
 
-      - name: Allow runner IP in Key Vault firewall (prod)
-        id: kv_firewall_prod
+          if [[ -n "$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" ]]; then
+            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
+          fi
+
+      - name: Preflight security checks (prod)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-
-          extract_tfvar_string() {
-            local file="$1"
-            local key="$2"
-            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n 1
-          }
-
-          PROD_TFVARS="${{ env.TERRAFORM_DIR }}/vars/prod.tfvars"
-          KV_NAME="$(extract_tfvar_string "${PROD_TFVARS}" "shared_key_vault_name")"
-          if [[ -z "${KV_NAME}" ]]; then
-            KV_NAME="$(extract_tfvar_string "${PROD_TFVARS}" "key_vault_name")"
-          fi
-          if [[ -z "${KV_NAME}" ]]; then
-            echo "::error::Unable to resolve Key Vault name from vars/prod.tfvars."
-            exit 1
-          fi
-
-          KV_ID="$(az keyvault show --name "${KV_NAME}" --query id -o tsv 2>/dev/null || true)"
-          if [[ -z "${KV_ID}" ]]; then
-            echo "Key Vault ${KV_NAME} not found yet; skipping firewall bootstrap."
-            echo "kv_name=" >> "$GITHUB_OUTPUT"
-            echo "kv_rg=" >> "$GITHUB_OUTPUT"
-            echo "runner_ip=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          KV_DEFAULT_ACTION="$(az keyvault show --name "${KV_NAME}" --query properties.networkAcls.defaultAction -o tsv 2>/dev/null || true)"
-          if [[ "${KV_NETWORK_MODE}" != "firewall" && "${KV_DEFAULT_ACTION}" != "Deny" ]]; then
-            echo "KV firewall bootstrap not required (mode=${KV_NETWORK_MODE}, defaultAction=${KV_DEFAULT_ACTION:-n/a})."
-            echo "kv_name=" >> "$GITHUB_OUTPUT"
-            echo "kv_rg=" >> "$GITHUB_OUTPUT"
-            echo "runner_ip=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          KV_RG="$(printf '%s' "${KV_ID}" | awk -F/ '{for (i=1; i<=NF; i++) if ($i=="resourceGroups") {print $(i+1); exit}}')"
-          RUNNER_IP="$(curl -fsS https://api.ipify.org || curl -fsS https://ifconfig.me || true)"
-
-          if [[ -z "${KV_RG}" || -z "${RUNNER_IP}" ]]; then
-            echo "::error::Unable to resolve Key Vault resource group or runner IP."
-            exit 1
-          fi
-
-          az keyvault network-rule add \
-            --name "${KV_NAME}" \
-            --resource-group "${KV_RG}" \
-            --ip-address "${RUNNER_IP}" >/dev/null
-
-          # Keep the same runner IP in Terraform-managed Key Vault firewall during this run.
-          echo "TF_VAR_key_vault_allowed_ip_cidrs=[\"${RUNNER_IP}/32\"]" >> "$GITHUB_ENV"
-          echo "kv_name=${KV_NAME}" >> "$GITHUB_OUTPUT"
-          echo "kv_rg=${KV_RG}" >> "$GITHUB_OUTPUT"
-          echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
-          echo "Added runner IP ${RUNNER_IP} to Key Vault ${KV_NAME} firewall."
+          ./scripts/check-post-refactor-prereqs.sh \
+            --environment "prod" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --strict-runner
 
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
@@ -455,7 +343,7 @@ jobs:
           extract_tfvar_string() {
             local file="$1"
             local key="$2"
-            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n 1
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" "${file}" | head -n 1
           }
 
           PROD_TFVARS="${{ env.TERRAFORM_DIR }}/vars/prod.tfvars"
@@ -498,31 +386,14 @@ jobs:
               ;;
           esac
 
-      - name: Remove runner IP from Key Vault firewall (prod)
-        if: always()
-        run: |
-          set -euo pipefail
-          KV_NAME="${{ steps.kv_firewall_prod.outputs.kv_name }}"
-          KV_RG="${{ steps.kv_firewall_prod.outputs.kv_rg }}"
-          RUNNER_IP="${{ steps.kv_firewall_prod.outputs.runner_ip }}"
-
-          if [[ -n "${KV_NAME}" && -n "${KV_RG}" && -n "${RUNNER_IP}" ]]; then
-            az keyvault network-rule remove \
-              --name "${KV_NAME}" \
-              --resource-group "${KV_RG}" \
-              --ip-address "${RUNNER_IP}" >/dev/null || true
-            echo "Removed runner IP ${RUNNER_IP} from Key Vault ${KV_NAME} firewall."
-          else
-            echo "Skipping Key Vault firewall cleanup because step outputs are empty."
-          fi
-
   terraform-prod-destroy:
     name: Terraform prod (destroy)
     if: inputs.environment == 'prod' && inputs.action == 'destroy'
     needs: [validate-inputs]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
     environment: prod
     permissions:
+      actions: read
       contents: read
       id-token: write
     env:
@@ -531,8 +402,8 @@ jobs:
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
-      KV_NETWORK_MODE: public_allow
       RBAC_PROPAGATION_WAIT_SECONDS: "45"
+      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -550,91 +421,17 @@ jobs:
       - name: Export Terraform variables
         run: |
           set -euo pipefail
-          echo "TF_VAR_key_vault_network_mode=${KV_NETWORK_MODE}" >> "$GITHUB_ENV"
           echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
           if [[ -n "$APP_ENV_VARS_JSON" ]]; then
             echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
           fi
 
-      - name: Allow runner IP in Key Vault firewall (prod destroy)
-        id: kv_firewall_prod_destroy
-        run: |
-          set -euo pipefail
-
-          extract_tfvar_string() {
-            local file="$1"
-            local key="$2"
-            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n 1
-          }
-
-          PROD_TFVARS="${{ env.TERRAFORM_DIR }}/vars/prod.tfvars"
-          KV_NAME="$(extract_tfvar_string "${PROD_TFVARS}" "shared_key_vault_name")"
-          if [[ -z "${KV_NAME}" ]]; then
-            KV_NAME="$(extract_tfvar_string "${PROD_TFVARS}" "key_vault_name")"
+          if [[ -n "$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" ]]; then
+            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
           fi
-          if [[ -z "${KV_NAME}" ]]; then
-            echo "::error::Unable to resolve Key Vault name from vars/prod.tfvars."
-            exit 1
-          fi
-
-          KV_ID="$(az keyvault show --name "${KV_NAME}" --query id -o tsv 2>/dev/null || true)"
-          if [[ -z "${KV_ID}" ]]; then
-            echo "Key Vault ${KV_NAME} not found yet; skipping firewall bootstrap."
-            echo "kv_name=" >> "$GITHUB_OUTPUT"
-            echo "kv_rg=" >> "$GITHUB_OUTPUT"
-            echo "runner_ip=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          KV_DEFAULT_ACTION="$(az keyvault show --name "${KV_NAME}" --query properties.networkAcls.defaultAction -o tsv 2>/dev/null || true)"
-          if [[ "${KV_NETWORK_MODE}" != "firewall" && "${KV_DEFAULT_ACTION}" != "Deny" ]]; then
-            echo "KV firewall bootstrap not required (mode=${KV_NETWORK_MODE}, defaultAction=${KV_DEFAULT_ACTION:-n/a})."
-            echo "kv_name=" >> "$GITHUB_OUTPUT"
-            echo "kv_rg=" >> "$GITHUB_OUTPUT"
-            echo "runner_ip=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          KV_RG="$(printf '%s' "${KV_ID}" | awk -F/ '{for (i=1; i<=NF; i++) if ($i=="resourceGroups") {print $(i+1); exit}}')"
-          RUNNER_IP="$(curl -fsS https://api.ipify.org || curl -fsS https://ifconfig.me || true)"
-
-          if [[ -z "${KV_RG}" || -z "${RUNNER_IP}" ]]; then
-            echo "::error::Unable to resolve Key Vault resource group or runner IP."
-            exit 1
-          fi
-
-          az keyvault network-rule add \
-            --name "${KV_NAME}" \
-            --resource-group "${KV_RG}" \
-            --ip-address "${RUNNER_IP}" >/dev/null
-
-          # Keep the same runner IP in Terraform-managed Key Vault firewall during this run.
-          echo "TF_VAR_key_vault_allowed_ip_cidrs=[\"${RUNNER_IP}/32\"]" >> "$GITHUB_ENV"
-          echo "kv_name=${KV_NAME}" >> "$GITHUB_OUTPUT"
-          echo "kv_rg=${KV_RG}" >> "$GITHUB_OUTPUT"
-          echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
-          echo "Added runner IP ${RUNNER_IP} to Key Vault ${KV_NAME} firewall."
 
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
 
       - name: Terraform destroy (prod)
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/prod.tfvars -auto-approve
-
-      - name: Remove runner IP from Key Vault firewall (prod destroy)
-        if: always()
-        run: |
-          set -euo pipefail
-          KV_NAME="${{ steps.kv_firewall_prod_destroy.outputs.kv_name }}"
-          KV_RG="${{ steps.kv_firewall_prod_destroy.outputs.kv_rg }}"
-          RUNNER_IP="${{ steps.kv_firewall_prod_destroy.outputs.runner_ip }}"
-
-          if [[ -n "${KV_NAME}" && -n "${KV_RG}" && -n "${RUNNER_IP}" ]]; then
-            az keyvault network-rule remove \
-              --name "${KV_NAME}" \
-              --resource-group "${KV_RG}" \
-              --ip-address "${RUNNER_IP}" >/dev/null || true
-            echo "Removed runner IP ${RUNNER_IP} from Key Vault ${KV_NAME} firewall."
-          else
-            echo "Skipping Key Vault firewall cleanup because step outputs are empty."
-          fi

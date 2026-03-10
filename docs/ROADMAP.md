@@ -185,10 +185,10 @@ Objective: move from baseline security to production-grade identity model.
 - [x] Managed identity + RBAC pattern for runtime services
 - [x] Key Vault integration baseline introduced
 - [x] Phase 1 secret-resolution stabilization documented (`RBAC-only + public allow`)
-- [ ] Phase 2 migration to private Key Vault + self-hosted runner in VNet
-- [ ] Secret rotation runbook and ownership model
-- [ ] Access review cadence for CI/runtime/human identities
-- [ ] Add stronger policy checks (least privilege verification)
+- [x] Phase 2 migration to private Key Vault + self-hosted runner in VNet
+- [x] Secret rotation runbook and ownership model
+- [x] Access review cadence for CI/runtime/human identities
+- [x] Add stronger policy checks (least privilege verification)
 
 Outcome:
 Identity and secret management become auditable and operationally maintainable.
@@ -218,7 +218,7 @@ You are "junior-ready" for this stack when you can consistently do the following
 - [ ] Run CD safely (`plan` before `apply`) and recover from a failed deploy.
 - [ ] Trace one image from commit SHA to running environment by digest.
 - [ ] Manage Terraform backend/tfvars per environment without state confusion.
-- [ ] Validate Key Vault + RBAC prerequisites before deployment.
+- [x] Validate Key Vault + RBAC prerequisites before deployment.
 - [ ] Demonstrate one end-to-end release in a short screen-share:
   - commit -> PR checks -> merge -> CI Push artifact -> CD apply -> health checks
 - [ ] Provide portfolio evidence:

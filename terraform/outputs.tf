@@ -33,6 +33,11 @@ output "key_vault_name" {
   value       = local.key_vault_name
 }
 
+output "key_vault_private_endpoint_id" {
+  description = "Key Vault private endpoint id when enabled."
+  value       = try(azurerm_private_endpoint.key_vault[0].id, null)
+}
+
 output "db_key_vault_secret_names" {
   description = "Key Vault secret names used by Container App for DB_* runtime values."
   value       = local.db_kv_secret_name_by_env_var
@@ -61,4 +66,43 @@ output "postgres_admin_username" {
 output "postgres_database_name" {
   description = "Application database name."
   value       = azurerm_postgresql_flexible_server_database.main.name
+}
+
+output "shared_runner_resource_group_name" {
+  description = "Resource group containing shared runner network assets."
+  value       = local.shared_runner_resource_group_name
+}
+
+output "shared_runner_vnet_name" {
+  description = "Shared runner VNet name."
+  value = var.enable_shared_runner_platform ? azurerm_virtual_network.shared_runner[0].name : (
+    var.key_vault_private_endpoint_enabled ? data.azurerm_virtual_network.shared_runner[0].name : null
+  )
+}
+
+output "shared_runner_private_endpoints_subnet_id" {
+  description = "Subnet id used for Key Vault private endpoints."
+  value       = local.shared_runner_private_endpoint_subnet_id
+}
+
+output "shared_runner_private_dns_zone_name" {
+  description = "Private DNS zone used for Key Vault private endpoint records."
+  value = var.enable_shared_runner_platform ? azurerm_private_dns_zone.shared_runner_key_vault[0].name : (
+    var.key_vault_private_endpoint_enabled ? data.azurerm_private_dns_zone.shared_runner_key_vault[0].name : null
+  )
+}
+
+output "shared_runner_vm_name" {
+  description = "Name of shared self-hosted runner VM when created."
+  value       = try(azurerm_linux_virtual_machine.shared_runner[0].name, null)
+}
+
+output "shared_runner_vm_private_ip" {
+  description = "Private IP of shared self-hosted runner VM when created."
+  value       = try(azurerm_network_interface.shared_runner[0].private_ip_address, null)
+}
+
+output "shared_runner_expected_labels" {
+  description = "Expected labels for self-hosted CD runner."
+  value       = var.shared_runner_labels
 }

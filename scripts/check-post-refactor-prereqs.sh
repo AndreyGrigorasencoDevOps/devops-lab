@@ -6,40 +6,71 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 REPO="${GITHUB_REPOSITORY:-}"
 PROJECT_NAME=""
-SHARED_KV_NAME=""
-SHARED_KV_RG=""
+TARGET_ENV="dev"
+STRICT_RUNNER=false
+
+DEV_KV_NAME=""
+PROD_KV_NAME=""
 DEV_RESOURCE_GROUP=""
 PROD_RESOURCE_GROUP=""
 DEV_IDENTITY_NAME=""
 PROD_IDENTITY_NAME=""
 
+RUNNER_RESOURCE_GROUP=""
+RUNNER_VNET_NAME=""
+RUNNER_SUBNET_NAME=""
+RUNNER_PE_SUBNET_NAME=""
+RUNNER_DNS_ZONE_NAME=""
+RUNNER_VM_NAME=""
+
+# Defaults aligned with terraform/variables.tf
+DEFAULT_RUNNER_VNET_NAME="taskapi-shared-runner-vnet-uks"
+DEFAULT_RUNNER_SUBNET_NAME="taskapi-shared-runner-snet"
+DEFAULT_RUNNER_PE_SUBNET_NAME="taskapi-shared-pe-snet"
+DEFAULT_RUNNER_DNS_ZONE_NAME="privatelink.vaultcore.azure.net"
+DEFAULT_RUNNER_VM_NAME="taskapi-shared-cd-runner-01"
+
 FAILURES=0
 WARNINGS=0
 
+ENV_KV_NAME=""
+ENV_KV_RG=""
+ENV_KV_MODE=""
+ENV_KV_PE_ENABLED="true"
+ENV_USE_SHARED_KV="false"
+
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage:
   scripts/check-post-refactor-prereqs.sh [options]
 
 Options:
+  --environment <dev|prod>       Target environment for preflight (default: dev)
   --repo <owner/repo>            GitHub repository (default: infer from env/git remote)
   --project <name>               Terraform project name (default: inferred from terraform/variables.tf)
-  --kv-name <name>               Shared Key Vault name (default: inferred from terraform/vars/prod.tfvars)
-  --kv-rg <name>                 Shared Key Vault resource group (default: inferred from terraform/vars/prod.tfvars)
-  --dev-rg <name>                Dev resource group (default: <project>-dev-rg-uks)
-  --prod-rg <name>               Prod resource group (default: <project>-prod-rg-uks)
-  --dev-identity <name>          Dev User Assigned Identity name (default: <project>-dev-ca-identity)
-  --prod-identity <name>         Prod User Assigned Identity name (default: <project>-prod-ca-identity)
+  --dev-kv-name <name>           Override dev Key Vault name
+  --prod-kv-name <name>          Override prod Key Vault name
+  --dev-rg <name>                Override dev resource group (default: <project>-dev-rg-uks)
+  --prod-rg <name>               Override prod resource group (default: <project>-prod-rg-uks)
+  --dev-identity <name>          Override dev runtime identity name (default: <project>-dev-ca-identity)
+  --prod-identity <name>         Override prod runtime identity name (default: <project>-prod-ca-identity)
+  --runner-rg <name>             Override shared runner resource group
+  --runner-vnet <name>           Override shared runner VNet name
+  --runner-subnet <name>         Override shared runner subnet name
+  --runner-pe-subnet <name>      Override shared private-endpoint subnet name
+  --runner-dns-zone <name>       Override shared private DNS zone name
+  --runner-vm <name>             Override shared runner VM name
+  --strict-runner                Fail when runner readiness checks fail
   -h, --help                     Show this help
 
-What it checks (read-only):
-  1) GitHub repo Sonar config (SONAR_TOKEN, SONAR_PROJECT, SONAR_ORG)
-  2) GitHub environment vars for dev/prod
-  3) Azure shared Key Vault existence
-  4) Required DB secrets in shared Key Vault (<env>-db-password)
-  5) Optional DB runtime secrets in shared Key Vault (<env>-db-host/port/user/name)
-  6) Key Vault Secrets User role on User Assigned identities used by Container App
-EOF
+Read-only checks:
+  1) Terraform intent for target env (dedicated KV + firewall + private endpoint)
+  2) Key Vault existence, network posture, and DB secret contract
+  3) Runtime identity role scope (`Key Vault Secrets User` on env KV)
+  4) Deploy identity role scope (`Key Vault Secrets Officer` on env KV)
+  5) Shared runner network + private DNS prerequisites
+  6) Optional GitHub runner readiness check for labels `taskapi-cd,vnet`
+USAGE
 }
 
 pass() {
@@ -54,6 +85,43 @@ warn() {
 fail() {
   FAILURES=$((FAILURES + 1))
   printf '[FAIL] %s\n' "$1"
+}
+
+first_line() {
+  printf '%s\n' "$1" | head -n 1
+}
+
+is_gh_forbidden_error() {
+  local msg="$1"
+  printf '%s' "${msg}" | grep -qiE 'HTTP 403|forbidden|insufficient|Resource not accessible by integration|requires admin access'
+}
+
+extract_default_project() {
+  sed -n '/variable "project"/,/}/s/.*default[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "${REPO_ROOT}/terraform/variables.tf" | head -n 1
+}
+
+extract_tfvar_string() {
+  local file="$1"
+  local key="$2"
+  sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" "${file}" | head -n 1
+}
+
+extract_tfvar_bool() {
+  local file="$1"
+  local key="$2"
+  sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\(true\|false\).*/\1/p" "${file}" | head -n 1
+}
+
+coalesce() {
+  local value
+  for value in "$@"; do
+    if [[ -n "${value}" ]]; then
+      printf '%s' "${value}"
+      return
+    fi
+  done
+  printf ''
 }
 
 infer_repo() {
@@ -73,80 +141,64 @@ infer_repo() {
   REPO=""
 }
 
-extract_default_project() {
-  sed -n '/variable "project"/,/}/s/.*default[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
-    "${REPO_ROOT}/terraform/variables.tf" | head -n 1
-}
+resolve_env_settings() {
+  local tfvars_file
+  local use_shared_runner_platform
+  local tf_runner_rg
 
-extract_tfvar_string() {
-  local file="$1"
-  local key="$2"
-  sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n 1
-}
+  tfvars_file="${REPO_ROOT}/terraform/vars/${TARGET_ENV}.tfvars"
+  if [[ ! -f "${tfvars_file}" ]]; then
+    fail "Missing tfvars file: ${tfvars_file}"
+    return
+  fi
 
-infer_terraform_defaults() {
-  local prod_tfvars="${REPO_ROOT}/terraform/vars/prod.tfvars"
+  ENV_USE_SHARED_KV="$(extract_tfvar_bool "${tfvars_file}" "use_shared_key_vault")"
+  if [[ -z "${ENV_USE_SHARED_KV}" ]]; then
+    ENV_USE_SHARED_KV="false"
+  fi
 
-  if [[ -z "${PROJECT_NAME}" ]]; then
-    PROJECT_NAME="$(extract_default_project)"
-  fi
-  if [[ -z "${SHARED_KV_NAME}" ]]; then
-    SHARED_KV_NAME="$(extract_tfvar_string "${prod_tfvars}" "shared_key_vault_name")"
-  fi
-  if [[ -z "${SHARED_KV_RG}" ]]; then
-    SHARED_KV_RG="$(extract_tfvar_string "${prod_tfvars}" "shared_key_vault_resource_group_name")"
-  fi
-  if [[ -z "${DEV_RESOURCE_GROUP}" && -n "${PROJECT_NAME}" ]]; then
-    DEV_RESOURCE_GROUP="${PROJECT_NAME}-dev-rg-uks"
-  fi
-  if [[ -z "${PROD_RESOURCE_GROUP}" && -n "${PROJECT_NAME}" ]]; then
-    PROD_RESOURCE_GROUP="${PROJECT_NAME}-prod-rg-uks"
-  fi
-  if [[ -z "${DEV_IDENTITY_NAME}" && -n "${PROJECT_NAME}" ]]; then
-    DEV_IDENTITY_NAME="${PROJECT_NAME}-dev-ca-identity"
-  fi
-  if [[ -z "${PROD_IDENTITY_NAME}" && -n "${PROJECT_NAME}" ]]; then
-    PROD_IDENTITY_NAME="${PROJECT_NAME}-prod-ca-identity"
-  fi
-}
-
-first_line() {
-  printf '%s\n' "$1" | head -n 1
-}
-
-is_gh_forbidden_error() {
-  local msg="$1"
-  printf '%s' "${msg}" | grep -qiE "HTTP 403|forbidden|Resource not accessible by personal access token|insufficient"
-}
-
-list_contains_name() {
-  local list_value="$1"
-  local expected_name="$2"
-  printf '%s\n' "${list_value}" | grep -Fxq "${expected_name}"
-}
-
-check_name_in_list_required() {
-  local list_value="$1"
-  local expected_name="$2"
-  local pass_msg="$3"
-  local fail_msg="$4"
-  if list_contains_name "${list_value}" "${expected_name}"; then
-    pass "${pass_msg}"
+  if [[ "${TARGET_ENV}" == "dev" ]]; then
+    DEV_KV_NAME="$(coalesce "${DEV_KV_NAME}" "$(extract_tfvar_string "${tfvars_file}" "key_vault_name")")"
   else
-    fail "${fail_msg}"
+    PROD_KV_NAME="$(coalesce "${PROD_KV_NAME}" "$(extract_tfvar_string "${tfvars_file}" "key_vault_name")")"
   fi
-}
 
-check_name_in_list_optional() {
-  local list_value="$1"
-  local expected_name="$2"
-  local pass_msg="$3"
-  local warn_msg="$4"
-  if list_contains_name "${list_value}" "${expected_name}"; then
-    pass "${pass_msg}"
+  if [[ "${TARGET_ENV}" == "dev" ]]; then
+    ENV_KV_NAME="${DEV_KV_NAME}"
+    ENV_KV_RG="${DEV_RESOURCE_GROUP}"
   else
-    warn "${warn_msg}"
+    ENV_KV_NAME="${PROD_KV_NAME}"
+    ENV_KV_RG="${PROD_RESOURCE_GROUP}"
   fi
+
+  ENV_KV_MODE="$(extract_tfvar_string "${tfvars_file}" "key_vault_network_mode")"
+  if [[ -z "${ENV_KV_MODE}" ]]; then
+    ENV_KV_MODE="public_allow"
+  fi
+
+  ENV_KV_PE_ENABLED="$(extract_tfvar_bool "${tfvars_file}" "key_vault_private_endpoint_enabled")"
+  if [[ -z "${ENV_KV_PE_ENABLED}" ]]; then
+    ENV_KV_PE_ENABLED="true"
+  fi
+
+  use_shared_runner_platform="$(extract_tfvar_bool "${tfvars_file}" "enable_shared_runner_platform")"
+  if [[ -z "${use_shared_runner_platform}" ]]; then
+    use_shared_runner_platform="false"
+  fi
+
+  tf_runner_rg="$(extract_tfvar_string "${tfvars_file}" "shared_runner_resource_group_name")"
+
+  if [[ "${use_shared_runner_platform}" == "true" ]]; then
+    RUNNER_RESOURCE_GROUP="$(coalesce "${RUNNER_RESOURCE_GROUP}" "${DEV_RESOURCE_GROUP}")"
+  else
+    RUNNER_RESOURCE_GROUP="$(coalesce "${RUNNER_RESOURCE_GROUP}" "${tf_runner_rg}" "${DEV_RESOURCE_GROUP}")"
+  fi
+
+  RUNNER_VNET_NAME="$(coalesce "${RUNNER_VNET_NAME}" "$(extract_tfvar_string "${tfvars_file}" "shared_runner_vnet_name")" "${DEFAULT_RUNNER_VNET_NAME}")"
+  RUNNER_SUBNET_NAME="$(coalesce "${RUNNER_SUBNET_NAME}" "$(extract_tfvar_string "${tfvars_file}" "shared_runner_subnet_name")" "${DEFAULT_RUNNER_SUBNET_NAME}")"
+  RUNNER_PE_SUBNET_NAME="$(coalesce "${RUNNER_PE_SUBNET_NAME}" "$(extract_tfvar_string "${tfvars_file}" "shared_runner_private_endpoints_subnet_name")" "${DEFAULT_RUNNER_PE_SUBNET_NAME}")"
+  RUNNER_DNS_ZONE_NAME="$(coalesce "${RUNNER_DNS_ZONE_NAME}" "$(extract_tfvar_string "${tfvars_file}" "shared_runner_private_dns_zone_name")" "${DEFAULT_RUNNER_DNS_ZONE_NAME}")"
+  RUNNER_VM_NAME="$(coalesce "${RUNNER_VM_NAME}" "$(extract_tfvar_string "${tfvars_file}" "shared_runner_vm_name")" "${DEFAULT_RUNNER_VM_NAME}")"
 }
 
 check_key_vault_secret_exists() {
@@ -167,17 +219,11 @@ check_key_vault_secret_optional() {
   if az keyvault secret show --vault-name "${kv_name}" --name "${secret_name}" --query id -o tsv >/dev/null 2>&1; then
     pass "Key Vault optional secret '${secret_name}' exists in '${kv_name}'"
   else
-    warn "Key Vault optional secret '${secret_name}' is missing in '${kv_name}' (Terraform can create/update it on apply)"
+    warn "Key Vault optional secret '${secret_name}' is missing in '${kv_name}' (Terraform can recreate it during apply)"
   fi
 }
 
-kv_db_secret_name() {
-  local env_name="$1"
-  local key_name="$2"
-  printf "%s-db-%s" "${env_name}" "${key_name}"
-}
-
-check_key_vault_role_for_identity() {
+check_runtime_identity_role() {
   local identity_name="$1"
   local identity_rg="$2"
   local kv_id="$3"
@@ -191,7 +237,7 @@ check_key_vault_role_for_identity() {
     -o tsv 2>/dev/null || true)"
 
   if [[ -z "${principal_id}" ]]; then
-    warn "User Assigned Identity '${identity_name}' not found in '${identity_rg}' (role check skipped)"
+    warn "Runtime identity '${identity_name}' not found in '${identity_rg}' (likely first bootstrap)"
     return
   fi
 
@@ -202,14 +248,199 @@ check_key_vault_role_for_identity() {
     -o tsv 2>/dev/null || echo "0")"
 
   if [[ "${assignment_count}" =~ ^[0-9]+$ ]] && [[ "${assignment_count}" -ge 1 ]]; then
-    pass "Identity '${identity_name}' has 'Key Vault Secrets User' on shared Key Vault"
+    pass "Runtime identity '${identity_name}' has 'Key Vault Secrets User' on env Key Vault"
   else
-    fail "Identity '${identity_name}' is missing 'Key Vault Secrets User' on shared Key Vault"
+    fail "Runtime identity '${identity_name}' is missing 'Key Vault Secrets User' on env Key Vault"
+  fi
+}
+
+check_deploy_identity_role() {
+  local deploy_client_id="$1"
+  local kv_id="$2"
+  local assignment_count
+
+  if [[ -z "${deploy_client_id}" ]]; then
+    fail "Deploy identity client id is empty (expected ARM_CLIENT_ID or AZURE_CLIENT_ID)"
+    return
+  fi
+
+  assignment_count="$(az role assignment list \
+    --assignee "${deploy_client_id}" \
+    --scope "${kv_id}" \
+    --query "[?roleDefinitionName=='Key Vault Secrets Officer'] | length(@)" \
+    -o tsv 2>/dev/null || echo "0")"
+
+  if [[ "${assignment_count}" =~ ^[0-9]+$ ]] && [[ "${assignment_count}" -ge 1 ]]; then
+    pass "Deploy identity has 'Key Vault Secrets Officer' on env Key Vault"
+  else
+    fail "Deploy identity is missing 'Key Vault Secrets Officer' on env Key Vault"
+  fi
+}
+
+check_github_runner_readiness() {
+  local matching_count
+  local online_count
+  local api_error
+
+  if ! command -v gh >/dev/null 2>&1; then
+    if [[ "${STRICT_RUNNER}" == "true" ]]; then
+      fail "GitHub CLI ('gh') is not installed; cannot validate self-hosted runner readiness"
+    else
+      warn "GitHub CLI ('gh') is not installed; skipping self-hosted runner readiness check"
+    fi
+    return
+  fi
+
+  if [[ -z "${REPO}" ]]; then
+    warn "Repository slug is unresolved; skipping self-hosted runner readiness check"
+    return
+  fi
+
+  if ! gh auth status >/dev/null 2>&1; then
+    if [[ "${STRICT_RUNNER}" == "true" ]]; then
+      fail "GitHub CLI is not authenticated; cannot validate self-hosted runner readiness"
+    else
+      warn "GitHub CLI is not authenticated; skipping self-hosted runner readiness check"
+    fi
+    return
+  fi
+
+  api_error=""
+  matching_count="$(gh api "/repos/${REPO}/actions/runners" --jq '[.runners[] | select((.labels | map(.name) | index("taskapi-cd")) and (.labels | map(.name) | index("vnet")))] | length' 2>/tmp/cd_preflight_gh_err.log || true)"
+  if [[ -s /tmp/cd_preflight_gh_err.log ]]; then
+    api_error="$(cat /tmp/cd_preflight_gh_err.log)"
+    rm -f /tmp/cd_preflight_gh_err.log
+  fi
+
+  if [[ -n "${api_error}" ]]; then
+    if is_gh_forbidden_error "${api_error}"; then
+      warn "GitHub token cannot read self-hosted runners in ${REPO} (HTTP 403). Skipping GitHub-side runner status check."
+    else
+      warn "Unable to query self-hosted runners in ${REPO}: $(first_line "${api_error}")"
+    fi
+    return
+  fi
+
+  online_count="$(gh api "/repos/${REPO}/actions/runners" --jq '[.runners[] | select((.labels | map(.name) | index("taskapi-cd")) and (.labels | map(.name) | index("vnet")) and .status == "online")] | length' 2>/dev/null || echo "0")"
+
+  if [[ "${matching_count}" =~ ^[0-9]+$ ]] && [[ "${matching_count}" -ge 1 ]]; then
+    pass "Found ${matching_count} self-hosted runner(s) with labels taskapi-cd,vnet"
+  else
+    if [[ "${STRICT_RUNNER}" == "true" ]]; then
+      fail "No self-hosted runners with labels taskapi-cd,vnet are registered in ${REPO}"
+    else
+      warn "No self-hosted runners with labels taskapi-cd,vnet are registered in ${REPO}"
+    fi
+  fi
+
+  if [[ "${online_count}" =~ ^[0-9]+$ ]] && [[ "${online_count}" -ge 1 ]]; then
+    pass "At least one matching self-hosted runner is online"
+  else
+    if [[ "${STRICT_RUNNER}" == "true" ]]; then
+      fail "No matching self-hosted runner is online"
+    else
+      warn "No matching self-hosted runner is online"
+    fi
+  fi
+}
+
+check_runner_infra_in_azure() {
+  local vnet_id
+  local vm_power_state
+  local vm_public_ip_count
+  local dns_link_count
+
+  if [[ -z "${RUNNER_RESOURCE_GROUP}" || -z "${RUNNER_VNET_NAME}" || -z "${RUNNER_PE_SUBNET_NAME}" || -z "${RUNNER_DNS_ZONE_NAME}" ]]; then
+    fail "Runner network settings are unresolved. Verify tfvars and/or pass explicit --runner-* options."
+    return
+  fi
+
+  vnet_id="$(az network vnet show \
+    --resource-group "${RUNNER_RESOURCE_GROUP}" \
+    --name "${RUNNER_VNET_NAME}" \
+    --query id -o tsv 2>/dev/null || true)"
+  if [[ -z "${vnet_id}" ]]; then
+    fail "Runner VNet '${RUNNER_VNET_NAME}' was not found in '${RUNNER_RESOURCE_GROUP}'"
+    return
+  fi
+  pass "Runner VNet '${RUNNER_VNET_NAME}' exists"
+
+  if az network vnet subnet show \
+    --resource-group "${RUNNER_RESOURCE_GROUP}" \
+    --vnet-name "${RUNNER_VNET_NAME}" \
+    --name "${RUNNER_SUBNET_NAME}" \
+    --query id -o tsv >/dev/null 2>&1; then
+    pass "Runner subnet '${RUNNER_SUBNET_NAME}' exists"
+  else
+    fail "Runner subnet '${RUNNER_SUBNET_NAME}' is missing"
+  fi
+
+  if az network vnet subnet show \
+    --resource-group "${RUNNER_RESOURCE_GROUP}" \
+    --vnet-name "${RUNNER_VNET_NAME}" \
+    --name "${RUNNER_PE_SUBNET_NAME}" \
+    --query id -o tsv >/dev/null 2>&1; then
+    pass "Runner private-endpoint subnet '${RUNNER_PE_SUBNET_NAME}' exists"
+  else
+    fail "Runner private-endpoint subnet '${RUNNER_PE_SUBNET_NAME}' is missing"
+  fi
+
+  if az network private-dns zone show \
+    --resource-group "${RUNNER_RESOURCE_GROUP}" \
+    --name "${RUNNER_DNS_ZONE_NAME}" \
+    --query id -o tsv >/dev/null 2>&1; then
+    pass "Private DNS zone '${RUNNER_DNS_ZONE_NAME}' exists"
+  else
+    fail "Private DNS zone '${RUNNER_DNS_ZONE_NAME}' is missing"
+  fi
+
+  dns_link_count="$(az network private-dns link vnet list \
+    --resource-group "${RUNNER_RESOURCE_GROUP}" \
+    --zone-name "${RUNNER_DNS_ZONE_NAME}" \
+    --query "[?virtualNetwork.id=='${vnet_id}'] | length(@)" -o tsv 2>/dev/null || echo "0")"
+  if [[ "${dns_link_count}" =~ ^[0-9]+$ ]] && [[ "${dns_link_count}" -ge 1 ]]; then
+    pass "Private DNS zone '${RUNNER_DNS_ZONE_NAME}' is linked to runner VNet"
+  else
+    fail "Private DNS zone '${RUNNER_DNS_ZONE_NAME}' is not linked to runner VNet '${RUNNER_VNET_NAME}'"
+  fi
+
+  if [[ "${STRICT_RUNNER}" == "true" ]]; then
+    vm_power_state="$(az vm get-instance-view \
+      --resource-group "${RUNNER_RESOURCE_GROUP}" \
+      --name "${RUNNER_VM_NAME}" \
+      --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]" \
+      -o tsv 2>/dev/null || true)"
+
+    if [[ -z "${vm_power_state}" ]]; then
+      fail "Runner VM '${RUNNER_VM_NAME}' was not found in '${RUNNER_RESOURCE_GROUP}'"
+      return
+    fi
+
+    if [[ "${vm_power_state}" == "VM running" ]]; then
+      pass "Runner VM '${RUNNER_VM_NAME}' is running"
+    else
+      fail "Runner VM '${RUNNER_VM_NAME}' is not running (state: ${vm_power_state})"
+    fi
+
+    vm_public_ip_count="$(az vm list-ip-addresses \
+      --resource-group "${RUNNER_RESOURCE_GROUP}" \
+      --name "${RUNNER_VM_NAME}" \
+      --query "[0].virtualMachine.network.publicIpAddresses | length(@)" -o tsv 2>/dev/null || echo "0")"
+
+    if [[ "${vm_public_ip_count}" =~ ^[0-9]+$ ]] && [[ "${vm_public_ip_count}" -eq 0 ]]; then
+      pass "Runner VM '${RUNNER_VM_NAME}' has no public IP (outbound-only posture)"
+    else
+      fail "Runner VM '${RUNNER_VM_NAME}' has public IPs attached (expected outbound-only posture)"
+    fi
   fi
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --environment)
+      TARGET_ENV="${2:-}"
+      shift 2
+      ;;
     --repo)
       REPO="${2:-}"
       shift 2
@@ -218,12 +449,12 @@ while [[ $# -gt 0 ]]; do
       PROJECT_NAME="${2:-}"
       shift 2
       ;;
-    --kv-name)
-      SHARED_KV_NAME="${2:-}"
+    --dev-kv-name)
+      DEV_KV_NAME="${2:-}"
       shift 2
       ;;
-    --kv-rg)
-      SHARED_KV_RG="${2:-}"
+    --prod-kv-name)
+      PROD_KV_NAME="${2:-}"
       shift 2
       ;;
     --dev-rg)
@@ -242,6 +473,34 @@ while [[ $# -gt 0 ]]; do
       PROD_IDENTITY_NAME="${2:-}"
       shift 2
       ;;
+    --runner-rg)
+      RUNNER_RESOURCE_GROUP="${2:-}"
+      shift 2
+      ;;
+    --runner-vnet)
+      RUNNER_VNET_NAME="${2:-}"
+      shift 2
+      ;;
+    --runner-subnet)
+      RUNNER_SUBNET_NAME="${2:-}"
+      shift 2
+      ;;
+    --runner-pe-subnet)
+      RUNNER_PE_SUBNET_NAME="${2:-}"
+      shift 2
+      ;;
+    --runner-dns-zone)
+      RUNNER_DNS_ZONE_NAME="${2:-}"
+      shift 2
+      ;;
+    --runner-vm)
+      RUNNER_VM_NAME="${2:-}"
+      shift 2
+      ;;
+    --strict-runner)
+      STRICT_RUNNER=true
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -254,166 +513,122 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${TARGET_ENV}" != "dev" && "${TARGET_ENV}" != "prod" ]]; then
+  fail "--environment must be 'dev' or 'prod'"
+  exit 2
+fi
+
+if [[ -z "${PROJECT_NAME}" ]]; then
+  PROJECT_NAME="$(extract_default_project)"
+fi
+
+if [[ -z "${DEV_RESOURCE_GROUP}" && -n "${PROJECT_NAME}" ]]; then
+  DEV_RESOURCE_GROUP="${PROJECT_NAME}-dev-rg-uks"
+fi
+if [[ -z "${PROD_RESOURCE_GROUP}" && -n "${PROJECT_NAME}" ]]; then
+  PROD_RESOURCE_GROUP="${PROJECT_NAME}-prod-rg-uks"
+fi
+if [[ -z "${DEV_IDENTITY_NAME}" && -n "${PROJECT_NAME}" ]]; then
+  DEV_IDENTITY_NAME="${PROJECT_NAME}-dev-ca-identity"
+fi
+if [[ -z "${PROD_IDENTITY_NAME}" && -n "${PROJECT_NAME}" ]]; then
+  PROD_IDENTITY_NAME="${PROJECT_NAME}-prod-ca-identity"
+fi
+
 infer_repo
-infer_terraform_defaults
+resolve_env_settings
 
 printf '\n== Context ==\n'
+printf 'Target env: %s\n' "${TARGET_ENV}"
 printf 'Repo: %s\n' "${REPO:-n/a}"
 printf 'Project: %s\n' "${PROJECT_NAME:-n/a}"
-printf 'Shared KV: %s (rg: %s)\n' "${SHARED_KV_NAME:-n/a}" "${SHARED_KV_RG:-n/a}"
-printf 'Dev identity: %s (rg: %s)\n' "${DEV_IDENTITY_NAME:-n/a}" "${DEV_RESOURCE_GROUP:-n/a}"
-printf 'Prod identity: %s (rg: %s)\n' "${PROD_IDENTITY_NAME:-n/a}" "${PROD_RESOURCE_GROUP:-n/a}"
+printf 'Env Key Vault: %s (rg: %s)\n' "${ENV_KV_NAME:-n/a}" "${ENV_KV_RG:-n/a}"
+printf 'Runner RG/VNet: %s / %s\n' "${RUNNER_RESOURCE_GROUP:-n/a}" "${RUNNER_VNET_NAME:-n/a}"
+printf 'Runner PE subnet: %s\n' "${RUNNER_PE_SUBNET_NAME:-n/a}"
+printf 'Runner DNS zone: %s\n' "${RUNNER_DNS_ZONE_NAME:-n/a}"
+printf 'Strict runner mode: %s\n' "${STRICT_RUNNER}"
 printf '\n'
 
-GH_AVAILABLE=true
-AZ_AVAILABLE=true
+check_github_runner_readiness
 
-if ! command -v gh >/dev/null 2>&1; then
-  GH_AVAILABLE=false
-  fail "GitHub CLI ('gh') is not installed"
-fi
-
+printf '== Azure checks ==\n'
 if ! command -v az >/dev/null 2>&1; then
-  AZ_AVAILABLE=false
   fail "Azure CLI ('az') is not installed"
-fi
-
-if [[ "${GH_AVAILABLE}" == "true" ]]; then
-  printf '== GitHub checks ==\n'
-  if [[ -z "${REPO}" ]]; then
-    fail "GitHub repo is unresolved. Pass --repo owner/repo."
-  elif gh auth status >/dev/null 2>&1; then
-    GH_CHECKS_READABLE=true
-    pass "GitHub CLI auth is active"
-
-    if ! REPO_SECRET_NAMES="$(gh secret list -R "${REPO}" --json name --jq '.[].name' 2>&1)"; then
-      GH_CHECKS_READABLE=false
-      if is_gh_forbidden_error "${REPO_SECRET_NAMES}"; then
-        fail "GitHub token cannot read repository secrets in ${REPO} (HTTP 403)."
-      else
-        fail "Unable to list repository secrets in ${REPO}: $(first_line "${REPO_SECRET_NAMES}")"
-      fi
-    fi
-
-    if ! REPO_VARIABLE_NAMES="$(gh variable list -R "${REPO}" --json name --jq '.[].name' 2>&1)"; then
-      GH_CHECKS_READABLE=false
-      if is_gh_forbidden_error "${REPO_VARIABLE_NAMES}"; then
-        fail "GitHub token cannot read repository variables in ${REPO} (HTTP 403)."
-      else
-        fail "Unable to list repository variables in ${REPO}: $(first_line "${REPO_VARIABLE_NAMES}")"
-      fi
-    fi
-
-    if ! DEV_ENV_VARIABLE_NAMES="$(gh variable list --env dev -R "${REPO}" --json name --jq '.[].name' 2>&1)"; then
-      GH_CHECKS_READABLE=false
-      if is_gh_forbidden_error "${DEV_ENV_VARIABLE_NAMES}"; then
-        fail "GitHub token cannot read 'dev' environment variables in ${REPO} (HTTP 403)."
-      else
-        fail "Unable to list 'dev' environment variables in ${REPO}: $(first_line "${DEV_ENV_VARIABLE_NAMES}")"
-      fi
-    fi
-
-    if ! PROD_ENV_VARIABLE_NAMES="$(gh variable list --env prod -R "${REPO}" --json name --jq '.[].name' 2>&1)"; then
-      GH_CHECKS_READABLE=false
-      if is_gh_forbidden_error "${PROD_ENV_VARIABLE_NAMES}"; then
-        fail "GitHub token cannot read 'prod' environment variables in ${REPO} (HTTP 403)."
-      else
-        fail "Unable to list 'prod' environment variables in ${REPO}: $(first_line "${PROD_ENV_VARIABLE_NAMES}")"
-      fi
-    fi
-
-    if [[ "${GH_CHECKS_READABLE}" == "true" ]]; then
-      check_name_in_list_required "${REPO_SECRET_NAMES}" "SONAR_TOKEN" \
-        "GitHub secret 'SONAR_TOKEN' exists" \
-        "GitHub secret 'SONAR_TOKEN' is missing in ${REPO}"
-
-      check_name_in_list_required "${REPO_VARIABLE_NAMES}" "SONAR_PROJECT" \
-        "GitHub repo variable 'SONAR_PROJECT' exists" \
-        "GitHub repo variable 'SONAR_PROJECT' is missing in ${REPO}"
-
-      check_name_in_list_required "${REPO_VARIABLE_NAMES}" "SONAR_ORG" \
-        "GitHub repo variable 'SONAR_ORG' exists" \
-        "GitHub repo variable 'SONAR_ORG' is missing in ${REPO}"
-
-      for env_name in dev prod; do
-        ENV_VAR_NAMES="${DEV_ENV_VARIABLE_NAMES}"
-        if [[ "${env_name}" == "prod" ]]; then
-          ENV_VAR_NAMES="${PROD_ENV_VARIABLE_NAMES}"
-        fi
-
-        check_name_in_list_required "${ENV_VAR_NAMES}" "AZURE_CLIENT_ID" \
-          "GitHub env '${env_name}' variable 'AZURE_CLIENT_ID' exists" \
-          "GitHub env '${env_name}' variable 'AZURE_CLIENT_ID' is missing"
-        check_name_in_list_required "${ENV_VAR_NAMES}" "AZURE_TENANT_ID" \
-          "GitHub env '${env_name}' variable 'AZURE_TENANT_ID' exists" \
-          "GitHub env '${env_name}' variable 'AZURE_TENANT_ID' is missing"
-        check_name_in_list_required "${ENV_VAR_NAMES}" "AZURE_SUBSCRIPTION_ID" \
-          "GitHub env '${env_name}' variable 'AZURE_SUBSCRIPTION_ID' exists" \
-          "GitHub env '${env_name}' variable 'AZURE_SUBSCRIPTION_ID' is missing"
-        check_name_in_list_required "${ENV_VAR_NAMES}" "ACR_NAME" \
-          "GitHub env '${env_name}' variable 'ACR_NAME' exists" \
-          "GitHub env '${env_name}' variable 'ACR_NAME' is missing"
-        check_name_in_list_required "${ENV_VAR_NAMES}" "ACR_LOGIN_SERVER" \
-          "GitHub env '${env_name}' variable 'ACR_LOGIN_SERVER' exists" \
-          "GitHub env '${env_name}' variable 'ACR_LOGIN_SERVER' is missing"
-        check_name_in_list_optional "${ENV_VAR_NAMES}" "TF_APP_ENV_VARS_JSON" \
-          "GitHub env '${env_name}' optional variable 'TF_APP_ENV_VARS_JSON' exists" \
-          "GitHub env '${env_name}' optional variable 'TF_APP_ENV_VARS_JSON' is not set"
-      done
-    else
-      warn "Skipping GitHub variable/secret presence checks due GitHub API access errors above."
-    fi
-  else
-    fail "GitHub CLI is not authenticated (run: gh auth login)"
-  fi
-  printf '\n'
-fi
-
-if [[ "${AZ_AVAILABLE}" == "true" ]]; then
-  printf '== Azure checks ==\n'
+else
   if az account show >/dev/null 2>&1; then
     pass "Azure CLI auth is active"
 
-    if [[ -z "${SHARED_KV_NAME}" || -z "${SHARED_KV_RG}" ]]; then
-      fail "Shared Key Vault name/resource-group is unresolved. Pass --kv-name and --kv-rg."
+    if [[ "${ENV_USE_SHARED_KV}" == "true" ]]; then
+      fail "Terraform tfvars for ${TARGET_ENV} still has use_shared_key_vault=true (Phase 2 requires dedicated Key Vault per env)"
     else
-      KV_ID="$(az keyvault show \
-        --name "${SHARED_KV_NAME}" \
-        --resource-group "${SHARED_KV_RG}" \
-        --query id -o tsv 2>/dev/null || true)"
+      pass "Terraform tfvars for ${TARGET_ENV} uses dedicated Key Vault"
+    fi
 
+    if [[ "${ENV_KV_MODE}" == "firewall" ]]; then
+      pass "key_vault_network_mode is 'firewall' for ${TARGET_ENV}"
+    else
+      fail "key_vault_network_mode for ${TARGET_ENV} is '${ENV_KV_MODE}' (expected 'firewall')"
+    fi
+
+    if [[ "${ENV_KV_PE_ENABLED}" == "true" ]]; then
+      pass "key_vault_private_endpoint_enabled is true for ${TARGET_ENV}"
+    else
+      fail "key_vault_private_endpoint_enabled for ${TARGET_ENV} is false (expected true)"
+    fi
+
+    if [[ -z "${ENV_KV_NAME}" || -z "${ENV_KV_RG}" ]]; then
+      fail "Environment Key Vault coordinates are unresolved"
+    else
+      KV_ID="$(az keyvault show --name "${ENV_KV_NAME}" --resource-group "${ENV_KV_RG}" --query id -o tsv 2>/dev/null || true)"
       if [[ -z "${KV_ID}" ]]; then
-        fail "Shared Key Vault '${SHARED_KV_NAME}' in '${SHARED_KV_RG}' was not found"
+        fail "Key Vault '${ENV_KV_NAME}' in '${ENV_KV_RG}' was not found"
       else
-        pass "Shared Key Vault '${SHARED_KV_NAME}' exists"
+        pass "Key Vault '${ENV_KV_NAME}' exists"
 
-        for env_name in dev prod; do
-          check_key_vault_secret_exists "${SHARED_KV_NAME}" "$(kv_db_secret_name "${env_name}" "password")"
-          for key_name in host port user name; do
-            check_key_vault_secret_optional "${SHARED_KV_NAME}" "$(kv_db_secret_name "${env_name}" "${key_name}")"
-          done
+        KV_DEFAULT_ACTION="$(az keyvault show --name "${ENV_KV_NAME}" --resource-group "${ENV_KV_RG}" --query properties.networkAcls.defaultAction -o tsv 2>/dev/null || true)"
+        if [[ "${KV_DEFAULT_ACTION}" == "Deny" ]]; then
+          pass "Key Vault network ACL defaultAction is Deny"
+        else
+          fail "Key Vault network ACL defaultAction is '${KV_DEFAULT_ACTION}' (expected Deny)"
+        fi
+
+        KV_BYPASS="$(az keyvault show --name "${ENV_KV_NAME}" --resource-group "${ENV_KV_RG}" --query properties.networkAcls.bypass -o tsv 2>/dev/null || true)"
+        if [[ "${KV_BYPASS}" == "AzureServices" ]]; then
+          pass "Key Vault bypass is AzureServices (pragmatic runtime compatibility mode)"
+        else
+          warn "Key Vault bypass is '${KV_BYPASS}' (expected AzureServices in current pragmatic mode)"
+        fi
+
+        KV_PE_COUNT="$(az keyvault show --name "${ENV_KV_NAME}" --resource-group "${ENV_KV_RG}" --query 'length(properties.privateEndpointConnections)' -o tsv 2>/dev/null || echo "0")"
+        if [[ "${KV_PE_COUNT}" =~ ^[0-9]+$ ]] && [[ "${KV_PE_COUNT}" -ge 1 ]]; then
+          pass "Key Vault has private endpoint connection(s)"
+        else
+          fail "Key Vault has no private endpoint connections"
+        fi
+
+        check_key_vault_secret_exists "${ENV_KV_NAME}" "${TARGET_ENV}-db-password"
+        for key_name in host port user name; do
+          check_key_vault_secret_optional "${ENV_KV_NAME}" "${TARGET_ENV}-db-${key_name}"
         done
 
-        if [[ -n "${DEV_IDENTITY_NAME}" && -n "${DEV_RESOURCE_GROUP}" ]]; then
-          check_key_vault_role_for_identity "${DEV_IDENTITY_NAME}" "${DEV_RESOURCE_GROUP}" "${KV_ID}"
+        if [[ "${TARGET_ENV}" == "dev" ]]; then
+          check_runtime_identity_role "${DEV_IDENTITY_NAME}" "${DEV_RESOURCE_GROUP}" "${KV_ID}"
         else
-          warn "Dev identity coordinates are unresolved (role check skipped)"
+          check_runtime_identity_role "${PROD_IDENTITY_NAME}" "${PROD_RESOURCE_GROUP}" "${KV_ID}"
         fi
 
-        if [[ -n "${PROD_IDENTITY_NAME}" && -n "${PROD_RESOURCE_GROUP}" ]]; then
-          check_key_vault_role_for_identity "${PROD_IDENTITY_NAME}" "${PROD_RESOURCE_GROUP}" "${KV_ID}"
-        else
-          warn "Prod identity coordinates are unresolved (role check skipped)"
-        fi
+        DEPLOY_CLIENT_ID="${ARM_CLIENT_ID:-${AZURE_CLIENT_ID:-}}"
+        check_deploy_identity_role "${DEPLOY_CLIENT_ID}" "${KV_ID}"
       fi
     fi
+
+    check_runner_infra_in_azure
   else
     fail "Azure CLI is not authenticated (run: az login)"
   fi
-  printf '\n'
 fi
 
-printf '== Result ==\n'
+printf '\n== Result ==\n'
 printf 'Failures: %s\n' "${FAILURES}"
 printf 'Warnings: %s\n' "${WARNINGS}"
 
