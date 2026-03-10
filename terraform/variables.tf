@@ -88,6 +88,120 @@ variable "shared_key_vault_resource_group_name" {
   }
 }
 
+variable "enable_shared_runner_platform" {
+  type        = bool
+  description = "If true, create shared self-hosted runner infrastructure (VNet, subnets, private DNS, runner VM)."
+  default     = false
+}
+
+variable "shared_runner_resource_group_name" {
+  type        = string
+  description = "Resource group where shared runner network assets already exist when enable_shared_runner_platform is false."
+  default     = null
+  nullable    = true
+  validation {
+    condition = (
+      var.enable_shared_runner_platform ||
+      !var.key_vault_private_endpoint_enabled ||
+      var.shared_runner_resource_group_name != null
+    )
+    error_message = "shared_runner_resource_group_name is required when key_vault_private_endpoint_enabled is true and enable_shared_runner_platform is false."
+  }
+}
+
+variable "shared_runner_vnet_name" {
+  type        = string
+  description = "Shared runner VNet name."
+  default     = "taskapi-shared-runner-vnet-uks"
+}
+
+variable "shared_runner_subnet_name" {
+  type        = string
+  description = "Runner VM subnet name inside shared runner VNet."
+  default     = "taskapi-shared-runner-snet"
+}
+
+variable "shared_runner_private_endpoints_subnet_name" {
+  type        = string
+  description = "Private Endpoint subnet name inside shared runner VNet."
+  default     = "taskapi-shared-pe-snet"
+}
+
+variable "shared_runner_nsg_name" {
+  type        = string
+  description = "Network Security Group name attached to shared runner subnets."
+  default     = "taskapi-shared-runner-nsg-uks"
+}
+
+variable "shared_runner_private_dns_zone_name" {
+  type        = string
+  description = "Private DNS zone used for Key Vault private endpoint resolution."
+  default     = "privatelink.vaultcore.azure.net"
+}
+
+variable "shared_runner_vnet_cidrs" {
+  type        = list(string)
+  description = "Address spaces for shared runner VNet when enable_shared_runner_platform is true."
+  default     = ["10.42.0.0/16"]
+}
+
+variable "shared_runner_subnet_cidrs" {
+  type        = list(string)
+  description = "Address prefixes for runner VM subnet."
+  default     = ["10.42.1.0/24"]
+}
+
+variable "shared_runner_private_endpoints_subnet_cidrs" {
+  type        = list(string)
+  description = "Address prefixes for private endpoint subnet."
+  default     = ["10.42.2.0/24"]
+}
+
+variable "shared_runner_enable_vm" {
+  type        = bool
+  description = "If true, create a single Linux VM for GitHub self-hosted runner in shared runner subnet."
+  default     = true
+}
+
+variable "shared_runner_vm_name" {
+  type        = string
+  description = "Name of self-hosted runner VM."
+  default     = "taskapi-shared-cd-runner-01"
+}
+
+variable "shared_runner_vm_size" {
+  type        = string
+  description = "Size of self-hosted runner VM."
+  default     = "Standard_B2s"
+}
+
+variable "shared_runner_admin_username" {
+  type        = string
+  description = "Admin username for self-hosted runner VM."
+  default     = "runneradmin"
+}
+
+variable "shared_runner_admin_ssh_public_key" {
+  type        = string
+  description = "SSH public key for self-hosted runner VM admin user."
+  default     = null
+  nullable    = true
+  validation {
+    condition = (
+      !var.enable_shared_runner_platform ||
+      !var.shared_runner_enable_vm ||
+      var.shared_runner_admin_ssh_public_key != null
+    )
+    error_message = "shared_runner_admin_ssh_public_key is required when enable_shared_runner_platform and shared_runner_enable_vm are true."
+  }
+}
+
+variable "shared_runner_labels" {
+  type        = list(string)
+  description = "Expected labels for self-hosted runner registration."
+  default     = ["self-hosted", "linux", "x64", "taskapi-cd", "vnet"]
+}
+
 variable "container_image_tag" {
   type        = string
   description = "Container image tag deployed to Container App."
@@ -174,6 +288,12 @@ variable "key_vault_network_mode" {
     condition     = contains(["public_allow", "firewall"], var.key_vault_network_mode)
     error_message = "key_vault_network_mode must be one of: public_allow, firewall."
   }
+}
+
+variable "key_vault_private_endpoint_enabled" {
+  type        = bool
+  description = "Create a private endpoint for the active Key Vault and bind it to shared private DNS."
+  default     = true
 }
 
 variable "rbac_propagation_wait_seconds" {

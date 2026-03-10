@@ -14,15 +14,18 @@ Node.js (Express) Task API used as a DevOps learning project.
   - Push checks: `.github/workflows/ci-push.yml` (push to `main` only)
 - Sonar is enabled in quality jobs for both PR and push workflows (token-gated and fork-safe).
 - CD is manual only via `.github/workflows/cd.yml` (`workflow_dispatch` with `environment`, `action`, `image_tag`).
+- CD Terraform jobs run on self-hosted runner labels in Azure VNet (`taskapi-cd`, `vnet`).
 - Terraform uses one shared root stack (`terraform/`) with:
   - env-specific backend files (`backend/dev.hcl`, `backend/prod.hcl`)
   - env-specific tfvars (`vars/dev.tfvars`, `vars/prod.tfvars`)
+- Stage 9 Phase 2 hardening is active: dedicated env Key Vaults + private endpoints + preflight gate.
 - Prod deployment promotes image by digest from DEV ACR to PROD ACR before Terraform apply.
 
 ## Documentation Map
 
 - Learning roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md)
 - Post-refactor operations: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)
+- Security operations: [docs/security-operations.md](./docs/security-operations.md)
 - Terraform usage: [terraform/README.md](./terraform/README.md)
 - Cloud architecture: [docs/cloud-architecture.md](./docs/cloud-architecture.md)
 
@@ -68,6 +71,7 @@ docker compose up --build
 +-- docs/
 |   +-- ROADMAP.md
 |   +-- post-refactor-runbook.md
+|   +-- security-operations.md
 |   +-- cloud-architecture.md
 |   +-- azure.md
 |   L-- terraform.md
@@ -135,6 +139,8 @@ Behavior:
 
 - Terraform is the deployment engine for both environments.
 - For `prod` plan/apply, the workflow promotes the image from DEV ACR to PROD ACR by digest before Terraform.
+- Terraform jobs run on self-hosted runner labels: `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`.
+- Preflight security check is mandatory before `plan/apply`.
 - `destroy` is available for both `dev` and `prod` (manual use only).
 - Normal release flow is `plan` then `apply` (reconciliation).
 - `destroy` is full state teardown for the selected environment, not selective cleanup.
@@ -163,6 +169,7 @@ terraform -chdir=terraform plan -var-file=vars/dev.tfvars -var="container_image_
 - `ACR_NAME`
 - `ACR_LOGIN_SERVER`
 - `TF_APP_ENV_VARS_JSON` (optional JSON map)
+- `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY` (required for shared runner VM create/update)
 
 ### Database wiring contract
 
@@ -176,8 +183,8 @@ Terraform provisions PostgreSQL and configures Container App to load all DB vari
 
 Secret ownership model:
 
-- Manually managed in shared Key Vault: `<env>-db-password` (`dev-db-password`, `prod-db-password`)
-- Terraform-managed in shared Key Vault: `<env>-db-host`, `<env>-db-port`, `<env>-db-user`, `<env>-db-name`
+- Manually managed in dedicated env Key Vault: `<env>-db-password` (`dev-db-password`, `prod-db-password`)
+- Terraform-managed in dedicated env Key Vault: `<env>-db-host`, `<env>-db-port`, `<env>-db-user`, `<env>-db-name`
 
 The Terraform deploy identity must have `Key Vault Secrets Officer` on the Key Vault scope.
 

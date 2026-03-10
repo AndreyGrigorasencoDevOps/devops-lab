@@ -57,8 +57,8 @@ CD workflow exports:
 
 - `TF_VAR_container_image_tag` (for plan/apply)
 - `TF_VAR_app_env_vars` (optional map from `TF_APP_ENV_VARS_JSON`)
-- `TF_VAR_key_vault_network_mode` (Phase 1 default: `public_allow`)
 - `TF_VAR_rbac_propagation_wait_seconds` (default: `45`)
+- `TF_VAR_shared_runner_admin_ssh_public_key` (from `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY` when set)
 
 ## 5) Key Vault Contract for Database
 
@@ -75,7 +75,7 @@ Role requirements:
 
 - Terraform deploy identity: `Key Vault Secrets Officer`
 - Container App user-assigned identity: `Key Vault Secrets User`
-- `Key Vault Contributor` is optional in Phase 1 and only needed when firewall automation mode is enabled.
+- CD runner path uses Key Vault private endpoint + private DNS in shared runner VNet.
 
 Bootstrap note:
 
@@ -86,6 +86,6 @@ Bootstrap note:
 - Keep dev/prod state isolated via backend keys.
 - Use `plan` before `apply`.
 - Manage secrets in Key Vault, not in Terraform variable files.
-- Current stabilization mode is `RBAC-only + public allow` for Key Vault.
+- Current hardening mode is dedicated env Key Vaults with `firewall` + private endpoints.
 - Use `destroy` only for full environment reset; normal deploy path is `plan` -> `apply`.
 - `apply` reconciles Terraform-managed resources only; unmanaged resources are not removed automatically.

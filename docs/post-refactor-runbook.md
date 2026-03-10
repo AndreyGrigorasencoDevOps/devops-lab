@@ -1,258 +1,145 @@
 # Post-Refactor Runbook
 
-This runbook covers the Sonar restore, CI split, and post-refactor operational checks for Terraform + Azure.
+This runbook is the operational baseline after Stage 9 Phase 2 hardening.
 
-## 1) What is automated now
+## 1) Current automation baseline
 
-- `CI` workflow (`.github/workflows/ci.yml`) runs on `pull_request` to `main`:
-  - PR title validation
-  - dependency review
-  - lint, tests with coverage, npm audit
-  - Sonar scan (when token exists and PR is not from a fork)
-  - Trivy scans
-  - Docker smoke test
-- `CI Push` workflow (`.github/workflows/ci-push.yml`) runs on `push` to `main`:
-  - lint, tests with coverage, npm audit
-  - Sonar scan (when token exists)
-  - Trivy scans
-  - Docker smoke test
-  - build/push immutable image `sha-<short_sha>` to DEV ACR + digest verify
-- `CD` workflow (`.github/workflows/cd.yml`) remains manual (`workflow_dispatch`) and uses Terraform for `plan|apply|destroy`.
-- CD now exports Terraform runtime vars for Key Vault mode and RBAC stabilization:
-  - `TF_VAR_key_vault_network_mode` (Phase 1 default: `public_allow`)
-  - `TF_VAR_rbac_propagation_wait_seconds` (default: `45`)
-- Runner-IP firewall allowlist steps exist in workflow for future hardening mode (`firewall`) but are disabled in current Phase 1 mode.
+- `CI` workflow (`.github/workflows/ci.yml`) runs on PRs to `main`.
+- `CI Push` workflow (`.github/workflows/ci-push.yml`) runs on `push` to `main` and publishes immutable `sha-<short_sha>` image tags.
+- `CD` workflow (`.github/workflows/cd.yml`) is manual (`workflow_dispatch`) and keeps digest promotion for prod.
+- Terraform jobs in CD run on self-hosted runner labels:
+  - `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`
+- CD enforces preflight security checks before `plan/apply`:
+  - `./scripts/check-post-refactor-prereqs.sh --environment <dev|prod> --strict-runner`
 
-## 1.1 CD reconcile policy
+## 1.1 Security operating model (active)
 
-Operational intent:
+- Dedicated Key Vault per environment:
+  - `taskapi-dev-kv-uks`
+  - `taskapi-prod-kv-uks`
+- Key Vault network mode: `firewall` (`defaultAction=Deny`).
+- Key Vault private endpoint enabled for each environment.
+- Shared runner VNet + private DNS zone:
+  - DNS zone: `privatelink.vaultcore.azure.net`
+- Runtime compatibility mode remains pragmatic:
+  - Key Vault `bypass = AzureServices` is intentionally retained until Container Apps VNet migration.
 
-- Standard deploy/sync uses `action=plan` then `action=apply`.
-- `action=apply` is the reconcile operation:
-  - creates resources missing from infra/state
-  - updates drifted/outdated managed resources
-  - replaces resources when Terraform marks them `-/+` (ForceNew cases)
-  - destroys managed resources removed from Terraform configuration
-- `action=destroy` is a full environment reset for that state, not partial cleanup.
+## 2) One-time setup (required)
 
-Plan interpretation:
+## 2.1 GitHub environment variables (`dev` and `prod`)
 
-- `+ create`: resource will be created.
-- `~ update`: resource will be updated in-place.
-- `-/+ replace`: resource will be destroyed and recreated.
-- `- destroy` during `apply`: managed resource no longer in config and will be removed from infra.
-- Resources created outside Terraform state are not removed by `apply`.
-
-## 1.2 Two-phase Key Vault operating model
-
-Current mode (Phase 1, active):
-
-- Key Vault access model: `RBAC-only + public allow`.
-- Goal: stable deploys from GitHub-hosted runners and reliable Container App secret resolution.
-- Terraform includes a deterministic RBAC propagation wait before Container App revision updates.
-
-Target mode (Phase 2, planned):
-
-- Self-hosted GitHub runner in Azure VNet for Terraform/CD jobs.
-- Key Vault private access model (`firewall` + private endpoint + private DNS).
-- Split Key Vault per environment (dev/prod), while CAE stays shared due trial limits.
-
-## 2) One-time manual setup
-
-## 2.1 Repo-level Sonar configuration
-
-Required in GitHub repository:
-
-- Secret: `SONAR_TOKEN`
-- Variables: `SONAR_PROJECT`, `SONAR_ORG`
-
-Commands:
-
-```bash
-gh secret set SONAR_TOKEN --repo <owner/repo>
-gh variable set SONAR_PROJECT --repo <owner/repo> --body "<sonar_project_key>"
-gh variable set SONAR_ORG --repo <owner/repo> --body "<sonar_org_key>"
-```
-
-## 2.2 GitHub environment variables (`dev` and `prod`)
-
-Required variables in each environment:
+Required in each GitHub environment:
 
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
 - `AZURE_SUBSCRIPTION_ID`
 - `ACR_NAME`
 - `ACR_LOGIN_SERVER`
-- Optional: `TF_APP_ENV_VARS_JSON` (JSON object string)
+- `TF_APP_ENV_VARS_JSON` (optional)
+- `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY` (required when creating/updating shared runner VM)
 
-Example commands:
+## 2.2 Key Vault DB password bootstrap
+
+Create manual source-of-truth DB password secrets in dedicated vaults:
 
 ```bash
-# dev
-gh variable set AZURE_CLIENT_ID --repo <owner/repo> --env dev --body "<value>"
-gh variable set AZURE_TENANT_ID --repo <owner/repo> --env dev --body "<value>"
-gh variable set AZURE_SUBSCRIPTION_ID --repo <owner/repo> --env dev --body "<value>"
-gh variable set ACR_NAME --repo <owner/repo> --env dev --body "<acr_name>"
-gh variable set ACR_LOGIN_SERVER --repo <owner/repo> --env dev --body "<acr_login_server>"
-
-# prod
-gh variable set AZURE_CLIENT_ID --repo <owner/repo> --env prod --body "<value>"
-gh variable set AZURE_TENANT_ID --repo <owner/repo> --env prod --body "<value>"
-gh variable set AZURE_SUBSCRIPTION_ID --repo <owner/repo> --env prod --body "<value>"
-gh variable set ACR_NAME --repo <owner/repo> --env prod --body "<acr_name>"
-gh variable set ACR_LOGIN_SERVER --repo <owner/repo> --env prod --body "<acr_login_server>"
+az keyvault secret set --vault-name taskapi-dev-kv-uks --name dev-db-password --value "<strong_password_dev>"
+az keyvault secret set --vault-name taskapi-prod-kv-uks --name prod-db-password --value "<strong_password_prod>"
 ```
 
-Optional `TF_APP_ENV_VARS_JSON`:
+Terraform manages runtime secrets automatically:
+
+- `<env>-db-host`
+- `<env>-db-port`
+- `<env>-db-user`
+- `<env>-db-name`
+
+## 2.3 Required Azure RBAC
+
+For each environment (`dev`, `prod`):
+
+- Deploy identity (GitHub OIDC app/service principal):
+  - `Key Vault Secrets Officer` on environment Key Vault scope.
+- Runtime user-assigned identity (`<project>-<env>-ca-identity`):
+  - `Key Vault Secrets User` on environment Key Vault scope.
+
+## 3) Deployment sequence
+
+Bootstrap note:
+
+- If shared runner infrastructure does not exist yet, run initial `dev` Terraform apply once from a trusted local shell (or temporary break-glass `ubuntu-latest`) to create runner VNet/VM/DNS assets first.
+
+1. Merge to `main` and capture `image_tag` from `CI Push` summary.
+2. Run CD `dev plan` with that image tag.
+3. Run CD `dev apply` with the same image tag.
+4. Validate dev endpoints: `/health` and `/ready` return `200`.
+5. Run CD `prod plan` with the same image tag.
+6. Run CD `prod apply` with the same image tag.
+7. Validate prod endpoints: `/health` and `/ready` return `200`.
+
+CLI examples:
 
 ```bash
-gh variable set TF_APP_ENV_VARS_JSON --repo <owner/repo> --env dev --body '{"NODE_ENV":"production"}'
-gh variable set TF_APP_ENV_VARS_JSON --repo <owner/repo> --env prod --body '{"NODE_ENV":"production"}'
-```
-
-## 2.3 Database + Key Vault model
-
-Current production-friendly model:
-
-- Terraform creates PostgreSQL server + application database.
-- Container App receives `DB_*` only via Key Vault references.
-- `DB_PASSWORD` is manual in Key Vault (source of truth), env-scoped:
-  - `dev-db-password`
-  - `prod-db-password`
-- Terraform creates/updates runtime Key Vault secrets:
-  - `<env>-db-host`
-  - `<env>-db-port`
-  - `<env>-db-user`
-  - `<env>-db-name`
-
-One-time manual steps:
-
-1. Create DB password secrets in shared Key Vault.
-
-```bash
-az keyvault secret set \
-  --vault-name <shared_kv_name> \
-  --name dev-db-password \
-  --value "<strong_password_dev>"
-
-az keyvault secret set \
-  --vault-name <shared_kv_name> \
-  --name prod-db-password \
-  --value "<strong_password_prod>"
-```
-
-2. Grant Key Vault secret write/read rights to Terraform deploy identity (GitHub OIDC service principal for each environment):
-
-```bash
-az role assignment create \
-  --assignee <azure_client_id_for_env> \
-  --role "Key Vault Secrets Officer" \
-  --scope "/subscriptions/<sub_id>/resourceGroups/<kv_rg>/providers/Microsoft.KeyVault/vaults/<shared_kv_name>"
-```
-
-3. (Optional, firewall mode only) Grant management-plane rights to modify Key Vault firewall rules:
-
-```bash
-az role assignment create \
-  --assignee <azure_client_id_for_env> \
-  --role "Key Vault Contributor" \
-  --scope "/subscriptions/<sub_id>/resourceGroups/<kv_rg>/providers/Microsoft.KeyVault/vaults/<shared_kv_name>"
-```
-
-Notes:
-
-- Container App user-assigned identity gets `Key Vault Secrets User` from Terraform.
-- `Key Vault Contributor` is optional in current Phase 1 (`public_allow`). Keep it for future `firewall` mode or if you intentionally enable firewall automation.
-- If a Key Vault is being created for the first time, run a one-time bootstrap:
-  1) create Key Vault (`terraform apply -target=azurerm_key_vault.main` for that env),
-  2) create `<env>-db-password`,
-  3) run full `plan/apply`.
-
-## 3) Automated preflight check
-
-Run the read-only prereq checker:
-
-```bash
-./scripts/check-post-refactor-prereqs.sh
-```
-
-Optional explicit inputs:
-
-```bash
-./scripts/check-post-refactor-prereqs.sh \
-  --repo <owner/repo> \
-  --project taskapi \
-  --kv-name taskapi-shared-kv-uks \
-  --kv-rg taskapi-dev-rg-uks \
-  --dev-identity taskapi-dev-ca-identity \
-  --prod-identity taskapi-prod-ca-identity
-```
-
-The script validates:
-
-- GitHub Sonar secret/variables
-- GitHub env variables (`dev` + `prod`)
-- shared Key Vault existence
-- required secrets `dev-db-password`, `prod-db-password`
-- optional runtime secrets `<env>-db-host/port/user/name`
-- `Key Vault Secrets User` role on Container App user-assigned identities (dev/prod)
-
-## 4) Execution sequence
-
-1. Open/update PR to `main` and confirm `CI` workflow passes.
-2. Merge to `main` and confirm `CI Push` passes.
-3. Capture `image_tag` (`sha-<short_sha>`) from CI Push summary.
-4. Run CD `dev plan` with that `image_tag` and review for unexpected `destroy/replace` on critical resources.
-5. Run CD `dev apply` with the same `image_tag`.
-6. Validate runtime:
-   - `GET /health` returns 200
-   - `GET /ready` returns 200
-7. Run CD `prod plan` with the same `image_tag` and review diff.
-8. Run CD `prod apply` with the same `image_tag`.
-9. Re-check `/health` and `/ready` in prod.
-
-Use `destroy` only for intentional full reset (dev/prod), not as part of normal release flow.
-
-## 5) CD commands (GitHub CLI)
-
-```bash
-# dev plan/apply
 gh workflow run cd.yml -f environment=dev -f action=plan -f image_tag=sha-<short_sha>
 gh workflow run cd.yml -f environment=dev -f action=apply -f image_tag=sha-<short_sha>
-
-# prod plan/apply
 gh workflow run cd.yml -f environment=prod -f action=plan -f image_tag=sha-<short_sha>
 gh workflow run cd.yml -f environment=prod -f action=apply -f image_tag=sha-<short_sha>
 ```
 
-## 6) Manual checklist
+## 4) Mandatory preflight checks
 
-- [ ] `SONAR_TOKEN`, `SONAR_PROJECT`, `SONAR_ORG` configured in repository
-- [ ] `dev` environment variables configured
-- [ ] `prod` environment variables configured
-- [ ] Key Vault secrets `dev-db-password` and `prod-db-password` exist
-- [ ] Terraform deploy identity has `Key Vault Secrets Officer` on shared Key Vault
-- [ ] (Optional in Phase 1) Terraform deploy identity has `Key Vault Contributor` for firewall allowlist automation
-- [ ] PostgreSQL server + application database are created by Terraform apply
-- [ ] Container App user-assigned identities have `Key Vault Secrets User` on shared Key Vault
-- [ ] PR pipeline (`CI`) passed
-- [ ] Push pipeline (`CI Push`) passed
-- [ ] CD dev `plan/apply` passed with expected image tag
-- [ ] CD prod `plan/apply` passed with digest promotion
-- [ ] `/health` and `/ready` checks passed in both environments
+Local/manual:
 
-## 7) Phase 2 migration checklist (private Key Vault + self-hosted runner)
+```bash
+./scripts/check-post-refactor-prereqs.sh --environment dev --strict-runner
+./scripts/check-post-refactor-prereqs.sh --environment prod --strict-runner
+```
 
-- [ ] Provision self-hosted GitHub runner in Azure VNet and register runner labels.
-- [ ] Create dedicated dev/prod Key Vaults and migrate secrets from shared vault.
-- [ ] Add Key Vault private endpoints and private DNS linkage for runner/ACA path.
-- [ ] Switch `key_vault_network_mode` to `firewall` in Terraform vars.
-- [ ] Update `cd.yml` Terraform jobs to run on self-hosted runner labels.
-- [ ] Re-run `dev plan/apply`, then `prod plan/apply`, and verify app secret resolution.
+The preflight validates:
 
-## 8) Validation scenarios
+- target env uses dedicated Key Vault (not shared)
+- `firewall` + private endpoint posture for Key Vault
+- required DB password secret in env Key Vault
+- runtime/deploy identity RBAC on env Key Vault
+- shared runner VNet/subnets/private DNS linkage
+- runner VM no-public-IP posture
+- optional GitHub runner registration status by labels
 
-1. Add or modify a managed resource parameter, run `plan`, confirm `create/update`, then `apply` succeeds.
-2. Remove a managed resource from Terraform config, run `plan`, confirm `destroy`, then `apply` removes only that managed resource.
-3. Change a ForceNew parameter, run `plan`, confirm `-/+ replace`, then `apply` recreates resource successfully.
-4. Run `destroy` only as explicit reset and verify it is never used in normal release sequence.
+## 5) Secret rotation and ownership model
+
+Ownership:
+
+- `*-db-password`: platform owner rotates manually in Key Vault.
+- `*-db-host/port/user/name`: Terraform-owned runtime metadata.
+
+Rotation SLA:
+
+- Production DB password rotation every 90 days.
+- Dev DB password rotation every 90 days or on-demand after incidents.
+
+Rotation steps:
+
+1. Set a new version for `<env>-db-password` in env Key Vault.
+2. Run CD `plan` then `apply` for the same env.
+3. Verify `/ready` and application DB connectivity.
+4. Record rotation date and actor in ops notes.
+
+## 6) Access review cadence
+
+Quarterly checklist:
+
+- Deploy identities: confirm only required Key Vault role assignments remain.
+- Runtime identities: confirm `Key Vault Secrets User` only on same-env vault.
+- Human principals/groups: remove stale privileged assignments.
+- Runner VM: confirm no public IP, latest OS patches, and runner service online.
+
+## 7) Break-glass rollback
+
+If emergency rollback is needed:
+
+1. Temporarily switch CD Terraform jobs to `ubuntu-latest`.
+2. Temporarily set `key_vault_network_mode = public_allow` in target tfvars.
+3. Run `plan` then `apply` for affected environment.
+4. Restore hardened configuration after incident is resolved.
+
+Do not destroy dedicated Key Vaults during rollback.
