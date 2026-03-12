@@ -70,6 +70,11 @@ az keyvault secret set --vault-name taskapi-dev-kv-uks --name dev-db-password --
 az keyvault secret set --vault-name taskapi-prod-kv-uks --name prod-db-password --value "<strong_password_prod>"
 ```
 
+Important:
+
+- `az keyvault secret set` uses your current Azure CLI login principal, not the GitHub deploy identity.
+- Your human/bootstrap principal needs `Key Vault Secrets Officer` (or broader equivalent) on the target vault scope before manual secret bootstrap will work.
+
 If you temporarily switch network mode to `firewall`, add/remove your local `/32` allowlist around bootstrap and local Terraform runs.
 
 Terraform manages runtime secrets automatically:
@@ -94,7 +99,13 @@ Bootstrap note:
 
 - If shared runner infrastructure does not exist yet, run initial `dev` Terraform apply once from a trusted local shell (or temporary break-glass `ubuntu-latest`) to create runner VNet/VM/DNS assets first.
 - Before first full `dev` plan/apply, ensure `dev-db-password` already exists in `taskapi-dev-kv-uks`.
-- Before first full `prod` plan/apply, ensure `prod-db-password` already exists in `taskapi-prod-kv-uks`.
+- Before first full `prod` plan/apply, run one-time local bootstrap for:
+  - dedicated prod Key Vault,
+  - manual `prod-db-password` secret creation before bootstrap steps that read DB password data,
+  - prod Key Vault private endpoint,
+  - runtime identity + `Key Vault Secrets User` assignment,
+  - manual deploy identity `Key Vault Secrets Officer` assignment,
+  - strict preflight validation before GitHub CD.
 - After switching tfvars to `key_vault_network_mode = public_allow`, run one apply per env to converge Key Vault ACL from `Deny` to `Allow`.
 - For local Terraform `plan/apply`, always pass explicit `-var="container_image_tag=sha-<short_sha>"` (do not rely on default `dev` tag).
 - For local Terraform runs in temporary `firewall` mode, also pass `-var='key_vault_allowed_ip_cidrs=["<your_ip>/32"]'`.

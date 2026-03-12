@@ -182,9 +182,16 @@ gh workflow run cd.yml --repo <owner/repo> -f environment=dev -f action=apply -f
 
 Validate health endpoints in dev (`/health`, `/ready`).
 
-## 8) Ensure mandatory prod DB password secret exists
+## 8) One-time prod bootstrap (minimal local bootstrap only)
 
-If this is the first-ever prod bootstrap and `taskapi-prod-kv-uks` does not exist yet, create Key Vault first via targeted apply:
+For the first `prod` cutover, local bootstrap must create or reconcile the dedicated Key Vault access path resources that CD preflight expects:
+
+- `taskapi-prod-kv-uks`,
+- Key Vault private endpoint in shared runner path,
+- runtime identity `taskapi-prod-ca-identity`,
+- runtime `Key Vault Secrets User` role assignment on the dedicated prod vault.
+
+If `taskapi-prod-kv-uks` does not exist yet, create the Key Vault first:
 
 ```bash
 terraform -chdir=terraform init -backend-config=backend/prod.hcl -reconfigure
@@ -192,7 +199,7 @@ terraform -chdir=terraform plan -var-file=vars/prod.tfvars -target=azurerm_key_v
 terraform -chdir=terraform apply -var-file=vars/prod.tfvars -target=azurerm_key_vault.main[0]
 ```
 
-Create required prod secret:
+Create the mandatory DB password secret before the rest of the bootstrap:
 
 ```bash
 az keyvault secret set \
@@ -201,20 +208,52 @@ az keyvault secret set \
   --value "<strong_password_prod>"
 ```
 
+This command uses your current Azure CLI login principal. If it fails with `ForbiddenByRbac`, grant your human/bootstrap principal `Key Vault Secrets Officer` on `taskapi-prod-kv-uks`, wait for RBAC propagation, and retry.
+
 If you temporarily switch `key_vault_network_mode` back to `firewall`, add/remove your `/32` IP around this command.
 
-## 9) Bootstrap prod infrastructure (full stack)
+Then reconcile the remaining bootstrap resources:
 
-Use the same promoted image tag:
+```bash
+terraform -chdir=terraform plan -var-file=vars/prod.tfvars \
+  -target=azurerm_private_endpoint.key_vault[0] \
+  -target=azurerm_user_assigned_identity.container_app \
+  -target=azurerm_role_assignment.key_vault_secrets_user
+terraform -chdir=terraform apply -var-file=vars/prod.tfvars \
+  -target=azurerm_private_endpoint.key_vault[0] \
+  -target=azurerm_user_assigned_identity.container_app \
+  -target=azurerm_role_assignment.key_vault_secrets_user
+```
+
+Grant the deploy identity access to the dedicated prod vault once:
+
+```bash
+KV_ID="$(az keyvault show --name taskapi-prod-kv-uks --resource-group taskapi-prod-rg-uks --query id -o tsv)"
+
+if [[ "$(az role assignment list --assignee "${AZURE_CLIENT_ID}" --scope "${KV_ID}" --query "[?roleDefinitionName=='Key Vault Secrets Officer'] | length(@)" -o tsv)" == "0" ]]; then
+  az role assignment create \
+    --assignee "${AZURE_CLIENT_ID}" \
+    --role "Key Vault Secrets Officer" \
+    --scope "${KV_ID}"
+fi
+```
+
+Stop after this point for the one-time local bootstrap.
+
+Do not run a local full-stack `prod` apply. After Key Vault exists and `prod-db-password` is present, continue through the normal GitHub CD flow.
+
+## 9) Validate prod bootstrap readiness
+
+Use the same immutable image tag that will be deployed:
 
 ```bash
 IMAGE_TAG="sha-<short_sha>"
 ```
 
+Optional: export deploy client id to validate deploy RBAC without warning noise in local preflight:
+
 ```bash
-terraform -chdir=terraform init -backend-config=backend/prod.hcl -reconfigure
-terraform -chdir=terraform plan -var-file=vars/prod.tfvars -var="container_image_tag=${IMAGE_TAG}"
-terraform -chdir=terraform apply -var-file=vars/prod.tfvars -var="container_image_tag=${IMAGE_TAG}"
+export AZURE_CLIENT_ID="<prod_github_oidc_app_client_id>"
 ```
 
 Run prod preflight checkpoint:
@@ -223,14 +262,41 @@ Run prod preflight checkpoint:
 ./scripts/check-post-refactor-prereqs.sh --environment prod --repo <owner/repo> --strict-runner
 ```
 
-## 10) Deploy prod via CD
+Expected result:
+
+- `taskapi-prod-kv-uks` exists,
+- Key Vault private endpoint exists on the prod vault,
+- `prod-db-password` exists,
+- runtime identity has `Key Vault Secrets User` on the prod vault,
+- deploy identity has `Key Vault Secrets Officer` on the prod vault,
+- strict preflight returns without failures.
+
+## 10) First prod cutover via GitHub CD
+
+Run `prod plan` through GitHub Actions:
 
 ```bash
-gh workflow run cd.yml --repo <owner/repo> -f environment=prod -f action=plan -f image_tag=sha-<short_sha>
-gh workflow run cd.yml --repo <owner/repo> -f environment=prod -f action=apply -f image_tag=sha-<short_sha>
+gh workflow run cd.yml --repo <owner/repo> -f environment=prod -f action=plan -f image_tag="${IMAGE_TAG}"
 ```
 
-Validate `/health` and `/ready` in prod.
+Before running `prod plan`, verify GitHub `prod` environment variables point to the current prod ACR:
+
+- `ACR_NAME=taskapiprodacrtoibsw`
+- `ACR_LOGIN_SERVER=taskapiprodacrtoibsw.azurecr.io`
+
+Review the `prod plan` run in GitHub:
+
+- digest promotion from DEV ACR to PROD ACR succeeds,
+- no unexpected critical `destroy` / `replace`,
+- preflight gate is green.
+
+Then run `prod apply` through GitHub Actions:
+
+```bash
+gh workflow run cd.yml --repo <owner/repo> -f environment=prod -f action=apply -f image_tag="${IMAGE_TAG}"
+```
+
+Validate `/health` and `/ready` in prod after apply.
 
 ## 11) Post-cutover hygiene
 
