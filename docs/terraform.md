@@ -76,16 +76,20 @@ Role requirements:
 - Terraform deploy identity: `Key Vault Secrets Officer`
 - Container App user-assigned identity: `Key Vault Secrets User`
 - CD runner path uses Key Vault private endpoint + private DNS in shared runner VNet.
+- Use `shared_runner_location` when shared runner VNet/VM must run in a different region than app resources.
 
 Bootstrap note:
 
 - If the Key Vault does not exist yet for an environment, create it first, then add `<env>-db-password`, then run full `plan/apply`.
+- Current runtime-compatible mode is `public_allow` until CAE VNet migration.
+- If temporary `firewall` mode blocks local access (`ForbiddenByFirewall`), add a temporary `/32` allowlist rule and pass the same `/32` via `key_vault_allowed_ip_cidrs` during local `plan/apply`.
 
 ## 6) Notes
 
 - Keep dev/prod state isolated via backend keys.
 - Use `plan` before `apply`.
+- Always pass explicit `container_image_tag` for local `plan/apply` (for example `sha-<short_sha>` from latest CI Push).
 - Manage secrets in Key Vault, not in Terraform variable files.
-- Current hardening mode is dedicated env Key Vaults with `firewall` + private endpoints.
+- Current hardening mode is dedicated env Key Vaults with private endpoints + `public_allow` runtime compatibility.
 - Use `destroy` only for full environment reset; normal deploy path is `plan` -> `apply`.
 - `apply` reconciles Terraform-managed resources only; unmanaged resources are not removed automatically.

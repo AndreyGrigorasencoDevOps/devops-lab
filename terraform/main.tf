@@ -28,6 +28,7 @@ locals {
   key_vault_name                    = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].name : azurerm_key_vault.main[0].name
   key_vault_firewall_enabled        = var.key_vault_network_mode == "firewall"
   shared_runner_resource_group_name = var.enable_shared_runner_platform ? azurerm_resource_group.main.name : var.shared_runner_resource_group_name
+  shared_runner_location_effective  = coalesce(var.shared_runner_location, azurerm_resource_group.main.location)
   shared_runner_private_endpoint_subnet_id = var.key_vault_private_endpoint_enabled ? (
     var.enable_shared_runner_platform ? azurerm_subnet.shared_runner_private_endpoints[0].id : data.azurerm_subnet.shared_runner_private_endpoints[0].id
   ) : null
@@ -47,11 +48,11 @@ locals {
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg
     chmod a+r /etc/apt/keyrings/hashicorp.gpg
-    echo "deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $$(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list
+    echo "deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list
 
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-    echo "deb [arch=$$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
 
     apt-get update
     apt-get install -y terraform gh
@@ -75,9 +76,10 @@ locals {
     REPO="$1"
     TOKEN="$2"
     LABELS="${join(",", var.shared_runner_labels)}"
+    export RUNNER_ALLOW_RUNASROOT=1
 
     cd /opt/actions-runner
-    ./config.sh --unattended --url "https://github.com/$${REPO}" --token "$${TOKEN}" --labels "$${LABELS}" --name "$$(hostname)" --work "_work" --replace
+    ./config.sh --unattended --url "https://github.com/$${REPO}" --token "$${TOKEN}" --labels "$${LABELS}" --name "$(hostname)" --work "_work" --replace
     ./svc.sh install root
     ./svc.sh start
     EOS
@@ -113,7 +115,7 @@ resource "azurerm_resource_group" "main" {
 resource "azurerm_network_security_group" "shared_runner" {
   count               = var.enable_shared_runner_platform ? 1 : 0
   name                = var.shared_runner_nsg_name
-  location            = azurerm_resource_group.main.location
+  location            = local.shared_runner_location_effective
   resource_group_name = azurerm_resource_group.main.name
   tags                = local.tags
 }
@@ -121,7 +123,7 @@ resource "azurerm_network_security_group" "shared_runner" {
 resource "azurerm_virtual_network" "shared_runner" {
   count               = var.enable_shared_runner_platform ? 1 : 0
   name                = var.shared_runner_vnet_name
-  location            = azurerm_resource_group.main.location
+  location            = local.shared_runner_location_effective
   resource_group_name = azurerm_resource_group.main.name
   address_space       = var.shared_runner_vnet_cidrs
   tags                = local.tags
@@ -133,6 +135,10 @@ resource "azurerm_subnet" "shared_runner" {
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.shared_runner[0].name
   address_prefixes     = var.shared_runner_subnet_cidrs
+
+  lifecycle {
+    replace_triggered_by = [azurerm_virtual_network.shared_runner[0]]
+  }
 }
 
 resource "azurerm_subnet" "shared_runner_private_endpoints" {
@@ -142,6 +148,10 @@ resource "azurerm_subnet" "shared_runner_private_endpoints" {
   virtual_network_name              = azurerm_virtual_network.shared_runner[0].name
   address_prefixes                  = var.shared_runner_private_endpoints_subnet_cidrs
   private_endpoint_network_policies = "Disabled"
+
+  lifecycle {
+    replace_triggered_by = [azurerm_virtual_network.shared_runner[0]]
+  }
 }
 
 resource "azurerm_subnet_network_security_group_association" "shared_runner" {
@@ -159,7 +169,7 @@ resource "azurerm_subnet_network_security_group_association" "shared_runner_priv
 resource "azurerm_network_interface" "shared_runner" {
   count               = var.enable_shared_runner_platform && var.shared_runner_enable_vm ? 1 : 0
   name                = "${var.shared_runner_vm_name}-nic"
-  location            = azurerm_resource_group.main.location
+  location            = local.shared_runner_location_effective
   resource_group_name = azurerm_resource_group.main.name
   tags                = local.tags
 
@@ -174,7 +184,7 @@ resource "azurerm_linux_virtual_machine" "shared_runner" {
   count               = var.enable_shared_runner_platform && var.shared_runner_enable_vm ? 1 : 0
   name                = var.shared_runner_vm_name
   resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
+  location            = local.shared_runner_location_effective
   size                = var.shared_runner_vm_size
   admin_username      = var.shared_runner_admin_username
   network_interface_ids = [
@@ -183,6 +193,11 @@ resource "azurerm_linux_virtual_machine" "shared_runner" {
   disable_password_authentication = true
   custom_data                     = base64encode(local.shared_runner_bootstrap_script)
   tags                            = local.tags
+
+  # Runner bootstrap updates are applied operationally (run-command) to avoid forced VM replacement on script tweaks.
+  lifecycle {
+    ignore_changes = [custom_data]
+  }
 
   admin_ssh_key {
     username   = var.shared_runner_admin_username
@@ -293,7 +308,7 @@ data "azurerm_key_vault" "shared" {
 resource "azurerm_private_endpoint" "key_vault" {
   count               = var.key_vault_private_endpoint_enabled ? 1 : 0
   name                = "${var.project}-${var.env}-kv-pe-uks"
-  location            = azurerm_resource_group.main.location
+  location            = local.shared_runner_location_effective
   resource_group_name = azurerm_resource_group.main.name
   subnet_id           = local.shared_runner_private_endpoint_subnet_id
   tags                = local.tags

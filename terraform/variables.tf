@@ -109,6 +109,13 @@ variable "shared_runner_resource_group_name" {
   }
 }
 
+variable "shared_runner_location" {
+  type        = string
+  description = "Azure region for shared runner network/VM path and Key Vault private endpoint location. Defaults to env resource group location when null."
+  default     = null
+  nullable    = true
+}
+
 variable "shared_runner_vnet_name" {
   type        = string
   description = "Shared runner VNet name."

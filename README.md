@@ -25,6 +25,8 @@ Node.js (Express) Task API used as a DevOps learning project.
 
 - Learning roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md)
 - Post-refactor operations: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)
+- Phase 2 manual cutover: [docs/phase2-cutover-next-steps.md](./docs/phase2-cutover-next-steps.md)
+- Legacy archive note: [docs/archive/terraform-environments-legacy.md](./docs/archive/terraform-environments-legacy.md)
 - Security operations: [docs/security-operations.md](./docs/security-operations.md)
 - Terraform usage: [terraform/README.md](./terraform/README.md)
 - Cloud architecture: [docs/cloud-architecture.md](./docs/cloud-architecture.md)
@@ -71,6 +73,9 @@ docker compose up --build
 +-- docs/
 |   +-- ROADMAP.md
 |   +-- post-refactor-runbook.md
+|   +-- phase2-cutover-next-steps.md
+|   +-- archive/
+|   |   L-- terraform-environments-legacy.md
 |   +-- security-operations.md
 |   +-- cloud-architecture.md
 |   +-- azure.md
