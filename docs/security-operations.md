@@ -50,8 +50,42 @@ Quarterly review checklist:
 Current gate verifies:
 
 - dedicated env Key Vault model (`use_shared_key_vault=false`)
-- Key Vault firewall + private endpoint posture
+- Key Vault network mode posture (`public_allow` now, `firewall` after CAE VNet migration) + private endpoint
 - required DB password secret in target env vault
 - runtime/deploy identity role bindings on target env vault
 - shared runner VNet/private DNS prerequisites
 - runner VM no-public-IP posture
+
+## 4.1) Temporary Trivy exception policy
+
+- Allowed temporary exception: only `AZU-0013` / `AVD-AZU-0013`.
+- Scope: PR + Push `Trivy config scan`; Trivy remains blocking for all other findings.
+- Source of truth: repository root `.trivyignore`.
+- Removal trigger: complete Phase 3/paid normalization milestone where runtime Key Vault mode returns to `firewall` (`default_action = Deny`) for both environments.
+
+## 5) Prod-ready discipline (current runtime mode)
+
+While `key_vault_network_mode = public_allow` is active:
+
+- enforce GitHub `prod` environment protection rules:
+  - required reviewers;
+  - restricted users/teams allowed to run deployment.
+- keep `prod destroy` for break-glass only (manual + reviewer approval).
+- keep ops cadence:
+  - quarterly access review evidence;
+  - 90-day rotation evidence for `prod-db-password`;
+  - runner VM patch and service-status checks.
+
+## 6) Phase 3 transition track (planned)
+
+Target: shared CAE with VNet integration, then return Key Vault mode to `firewall`.
+
+1. Build new shared CAE with VNet integration.
+2. Wire runtime private access path from CAE VNet to Key Vault.
+3. Cut over `dev`, validate, then cut over `prod`.
+4. Set `key_vault_network_mode = firewall` for both environments.
+
+Rollback:
+
+- revert apps to previous shared CAE;
+- temporarily restore `key_vault_network_mode = public_allow`.

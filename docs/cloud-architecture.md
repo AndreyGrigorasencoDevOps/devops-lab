@@ -109,6 +109,7 @@ Managed by Terraform:
 - Key Vault (dedicated per environment)
 - Key Vault private endpoint + private DNS zone group
 - Shared runner VNet + runner/PE subnets + NSG + Linux VM runner
+- Shared runner location override (`eastus` currently; planned return to `uksouth`)
 - Shared private DNS zone `privatelink.vaultcore.azure.net` + VNet link
 - RBAC assignments (`AcrPull`, `Key Vault Secrets User`)
 
@@ -118,8 +119,9 @@ Managed by Terraform:
 
 - GitHub -> Azure auth via OIDC (no long-lived cloud credentials in repo).
 - Runtime access via Managed Identity.
-- Key Vault firewall mode (`Deny`) with private endpoint access path from runner network.
-- Pragmatic runtime compatibility mode: Key Vault `bypass = AzureServices` remains enabled until CAE VNet migration.
+- Current runtime compatibility mode: Key Vault `key_vault_network_mode = public_allow` with `bypass = AzureServices` (temporary).
+- Target hardened mode after CAE VNet migration: Key Vault `firewall` with `default_action = Deny`.
+- Key Vault private endpoint access path from runner network is already active.
 - Principle of least privilege enforced through RBAC assignments.
 
 Database secret contract:

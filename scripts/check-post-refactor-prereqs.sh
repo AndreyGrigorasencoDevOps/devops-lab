@@ -64,7 +64,7 @@ Options:
   -h, --help                     Show this help
 
 Read-only checks:
-  1) Terraform intent for target env (dedicated KV + firewall + private endpoint)
+  1) Terraform intent for target env (dedicated KV + approved network mode + private endpoint)
   2) Key Vault existence, network posture, and DB secret contract
   3) Runtime identity role scope (`Key Vault Secrets User` on env KV)
   4) Deploy identity role scope (`Key Vault Secrets Officer` on env KV)
@@ -260,7 +260,7 @@ check_deploy_identity_role() {
   local assignment_count
 
   if [[ -z "${deploy_client_id}" ]]; then
-    fail "Deploy identity client id is empty (expected ARM_CLIENT_ID or AZURE_CLIENT_ID)"
+    warn "Deploy identity client id is empty (set ARM_CLIENT_ID or AZURE_CLIENT_ID to validate deploy identity RBAC)"
     return
   fi
 
@@ -566,8 +566,10 @@ else
 
     if [[ "${ENV_KV_MODE}" == "firewall" ]]; then
       pass "key_vault_network_mode is 'firewall' for ${TARGET_ENV}"
+    elif [[ "${ENV_KV_MODE}" == "public_allow" ]]; then
+      pass "key_vault_network_mode is 'public_allow' for ${TARGET_ENV} (runtime compatibility mode)"
     else
-      fail "key_vault_network_mode for ${TARGET_ENV} is '${ENV_KV_MODE}' (expected 'firewall')"
+      fail "key_vault_network_mode for ${TARGET_ENV} is '${ENV_KV_MODE}' (expected 'public_allow' or 'firewall')"
     fi
 
     if [[ "${ENV_KV_PE_ENABLED}" == "true" ]]; then
@@ -586,15 +588,28 @@ else
         pass "Key Vault '${ENV_KV_NAME}' exists"
 
         KV_DEFAULT_ACTION="$(az keyvault show --name "${ENV_KV_NAME}" --resource-group "${ENV_KV_RG}" --query properties.networkAcls.defaultAction -o tsv 2>/dev/null || true)"
-        if [[ "${KV_DEFAULT_ACTION}" == "Deny" ]]; then
-          pass "Key Vault network ACL defaultAction is Deny"
+        KV_PUBLIC_NETWORK_ACCESS="$(az keyvault show --name "${ENV_KV_NAME}" --resource-group "${ENV_KV_RG}" --query properties.publicNetworkAccess -o tsv 2>/dev/null || true)"
+        if [[ "${ENV_KV_MODE}" == "firewall" ]]; then
+          if [[ "${KV_DEFAULT_ACTION}" == "Deny" ]]; then
+            pass "Key Vault network ACL defaultAction is Deny (firewall mode)"
+          else
+            fail "Key Vault network ACL defaultAction is '${KV_DEFAULT_ACTION}' (expected Deny in firewall mode)"
+          fi
         else
-          fail "Key Vault network ACL defaultAction is '${KV_DEFAULT_ACTION}' (expected Deny)"
+          if [[ "${KV_DEFAULT_ACTION}" == "Allow" ]]; then
+            pass "Key Vault network ACL defaultAction is Allow (public_allow mode)"
+          elif [[ -z "${KV_DEFAULT_ACTION}" && "${KV_PUBLIC_NETWORK_ACCESS}" == "Enabled" ]]; then
+            pass "Key Vault network ACL object is absent and publicNetworkAccess is Enabled (public_allow mode)"
+          else
+            fail "Key Vault network mode mismatch: defaultAction='${KV_DEFAULT_ACTION}', publicNetworkAccess='${KV_PUBLIC_NETWORK_ACCESS}' (expected Allow/Enabled in public_allow mode)"
+          fi
         fi
 
         KV_BYPASS="$(az keyvault show --name "${ENV_KV_NAME}" --resource-group "${ENV_KV_RG}" --query properties.networkAcls.bypass -o tsv 2>/dev/null || true)"
         if [[ "${KV_BYPASS}" == "AzureServices" ]]; then
-          pass "Key Vault bypass is AzureServices (pragmatic runtime compatibility mode)"
+          pass "Key Vault bypass is AzureServices (pragmatic mode)"
+        elif [[ "${ENV_KV_MODE}" == "public_allow" && -z "${KV_BYPASS}" ]]; then
+          pass "Key Vault bypass is not set because network ACL object is absent in public_allow mode"
         else
           warn "Key Vault bypass is '${KV_BYPASS}' (expected AzureServices in current pragmatic mode)"
         fi

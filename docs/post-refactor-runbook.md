@@ -2,6 +2,15 @@
 
 This runbook is the operational baseline after Stage 9 Phase 2 hardening.
 
+For a step-by-step cutover execution checklist, use `docs/phase2-cutover-next-steps.md`.
+
+## 0) Current execution status (as of March 12, 2026)
+
+- `DONE`: Phase 2 cutover is operational in `dev` (runner online, strict preflight passing, dev apply successful).
+- `PENDING`: one-time prod bootstrap (`taskapi-prod-kv-uks` + `prod-db-password`).
+- `PENDING`: first prod CD cutover (`plan` -> `apply`) with digest-promotion validation.
+- `DECISION`: keep shared CAE model (`prod` continues to use shared CAE in this phase).
+
 ## 1) Current automation baseline
 
 - `CI` workflow (`.github/workflows/ci.yml`) runs on PRs to `main`.
@@ -17,12 +26,26 @@ This runbook is the operational baseline after Stage 9 Phase 2 hardening.
 - Dedicated Key Vault per environment:
   - `taskapi-dev-kv-uks`
   - `taskapi-prod-kv-uks`
-- Key Vault network mode: `firewall` (`defaultAction=Deny`).
+- Key Vault network mode: `public_allow` (temporary runtime compatibility until CAE VNet migration).
 - Key Vault private endpoint enabled for each environment.
 - Shared runner VNet + private DNS zone:
   - DNS zone: `privatelink.vaultcore.azure.net`
+  - current shared runner location: `eastus` (app/runtime stays in `uksouth`)
 - Runtime compatibility mode remains pragmatic:
   - Key Vault `bypass = AzureServices` is intentionally retained until Container Apps VNet migration.
+
+## 1.2 Temporary deviations and closure triggers
+
+Temporary constraints are tracked in the roadmap register:
+
+- `docs/ROADMAP.md` -> `Temporary Constraints Register (Free-tier period)`.
+
+Closure order (do not reorder):
+
+1. Complete shared CAE VNet migration and validate `dev`/`prod` runtime path.
+2. Switch `key_vault_network_mode` from `public_allow` to `firewall` in both tfvars and run converging applies.
+3. Remove temporary Trivy exception (`AZU-0013`/`AVD-AZU-0013`) and confirm PR + Push workflows stay green.
+4. Relocate shared runner platform from `eastus` to `uksouth` when subscription/SKU capacity allows.
 
 ## 2) One-time setup (required)
 
@@ -40,12 +63,14 @@ Required in each GitHub environment:
 
 ## 2.2 Key Vault DB password bootstrap
 
-Create manual source-of-truth DB password secrets in dedicated vaults:
+Current default mode is `public_allow`, so bootstrap secrets directly:
 
 ```bash
 az keyvault secret set --vault-name taskapi-dev-kv-uks --name dev-db-password --value "<strong_password_dev>"
 az keyvault secret set --vault-name taskapi-prod-kv-uks --name prod-db-password --value "<strong_password_prod>"
 ```
+
+If you temporarily switch network mode to `firewall`, add/remove your local `/32` allowlist around bootstrap and local Terraform runs.
 
 Terraform manages runtime secrets automatically:
 
@@ -68,6 +93,11 @@ For each environment (`dev`, `prod`):
 Bootstrap note:
 
 - If shared runner infrastructure does not exist yet, run initial `dev` Terraform apply once from a trusted local shell (or temporary break-glass `ubuntu-latest`) to create runner VNet/VM/DNS assets first.
+- Before first full `dev` plan/apply, ensure `dev-db-password` already exists in `taskapi-dev-kv-uks`.
+- Before first full `prod` plan/apply, ensure `prod-db-password` already exists in `taskapi-prod-kv-uks`.
+- After switching tfvars to `key_vault_network_mode = public_allow`, run one apply per env to converge Key Vault ACL from `Deny` to `Allow`.
+- For local Terraform `plan/apply`, always pass explicit `-var="container_image_tag=sha-<short_sha>"` (do not rely on default `dev` tag).
+- For local Terraform runs in temporary `firewall` mode, also pass `-var='key_vault_allowed_ip_cidrs=["<your_ip>/32"]'`.
 
 1. Merge to `main` and capture `image_tag` from `CI Push` summary.
 2. Run CD `dev plan` with that image tag.
@@ -91,14 +121,20 @@ gh workflow run cd.yml -f environment=prod -f action=apply -f image_tag=sha-<sho
 Local/manual:
 
 ```bash
+./scripts/check-post-refactor-prereqs.sh --environment dev
 ./scripts/check-post-refactor-prereqs.sh --environment dev --strict-runner
 ./scripts/check-post-refactor-prereqs.sh --environment prod --strict-runner
 ```
 
+Preflight sequencing:
+
+- Use relaxed mode (`without --strict-runner`) before runner registration.
+- Use strict mode (`with --strict-runner`) after runner registration and before every `plan/apply`.
+
 The preflight validates:
 
 - target env uses dedicated Key Vault (not shared)
-- `firewall` + private endpoint posture for Key Vault
+- approved Key Vault network mode (`public_allow` now, `firewall` later) + private endpoint posture
 - required DB password secret in env Key Vault
 - runtime/deploy identity RBAC on env Key Vault
 - shared runner VNet/subnets/private DNS linkage
@@ -138,8 +174,34 @@ Quarterly checklist:
 If emergency rollback is needed:
 
 1. Temporarily switch CD Terraform jobs to `ubuntu-latest`.
-2. Temporarily set `key_vault_network_mode = public_allow` in target tfvars.
+2. Keep (or revert to) `key_vault_network_mode = public_allow` in target tfvars.
 3. Run `plan` then `apply` for affected environment.
-4. Restore hardened configuration after incident is resolved.
+4. Restore hardened configuration after incident is resolved (for example, after CAE VNet migration to support `firewall` mode).
 
 Do not destroy dedicated Key Vaults during rollback.
+
+## 8) Prod-ready discipline (while runtime mode is `public_allow`)
+
+- Configure GitHub `prod` environment protection rules:
+  - required reviewers;
+  - restricted deploy permissions.
+- Keep `prod destroy` as break-glass only with explicit reviewer check.
+- Maintain operating cadence:
+  - quarterly access review;
+  - 90-day prod DB password rotation;
+  - runner VM patch + service health review.
+
+## 9) Next phase: Shared CAE VNet migration (planned)
+
+Goal: move runtime path to private connectivity and return Key Vault mode to `firewall`.
+
+1. Create a new shared CAE with VNet integration (parallel to current shared CAE).
+2. Add runtime private path from CAE VNet to Key Vault access for `dev` and `prod`.
+3. Migrate `dev` app to new shared CAE; validate health/readiness.
+4. Migrate `prod` app to new shared CAE; validate health/readiness.
+5. Switch `dev/prod` tfvars from `public_allow` back to `firewall`.
+
+Rollback:
+
+- move apps back to previous shared CAE;
+- restore `key_vault_network_mode = public_allow`.

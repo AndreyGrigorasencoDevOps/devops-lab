@@ -91,13 +91,14 @@ Important Terraform variables:
 - `key_vault_name`
 - `app_env_vars` (non-sensitive map)
 - Key Vault network policy:
-  - `key_vault_network_mode` (`firewall` in current Phase 2)
+  - `key_vault_network_mode` (`public_allow` currently, `firewall` after CAE VNet migration)
   - `key_vault_private_endpoint_enabled`
   - `key_vault_allowed_ip_cidrs` (used when mode is `firewall`)
   - `key_vault_allowed_subnet_ids` (used when mode is `firewall`)
 - Shared runner platform:
   - `enable_shared_runner_platform`
   - `shared_runner_resource_group_name`
+  - `shared_runner_location` (runner/PE region override, for example `eastus`)
   - `shared_runner_vnet_name`
   - `shared_runner_subnet_name`
   - `shared_runner_private_endpoints_subnet_name`
@@ -163,11 +164,14 @@ Additional requirement:
 - Runtime identity (`<project>-<env>-ca-identity`) must have `Key Vault Secrets User` on the same env Key Vault scope.
 - If Key Vault is created for the first time in an environment, bootstrap in three steps:
   1) create Key Vault,
-  2) add `<env>-db-password`,
+  2) add `<env>-db-password` (or, in temporary `firewall` mode, add/remove your `/32` allowlist around this step),
   3) run full Terraform `plan/apply`.
 
 ## Notes
 
 - `destroy` is available for both `dev` and `prod` in manual CD workflow.
+- Runtime-compatible default is `key_vault_network_mode = public_allow` (until CAE VNet migration).
+- If you temporarily switch to `firewall` mode for testing, add temporary KV firewall `/32` and pass the same value in `key_vault_allowed_ip_cidrs`.
+- For local `plan/apply`, always pass explicit `container_image_tag` (for example `sha-<short_sha>` from CI Push).
 - State keys and naming conventions are preserved to avoid accidental resource replacement.
 - Phase 2 hardening is active: dedicated env Key Vaults + self-hosted runner in VNet + private endpoint path.

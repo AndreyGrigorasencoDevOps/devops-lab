@@ -5,7 +5,7 @@ This roadmap is the source of truth for platform status and the learning path fo
 ## How To Use This Roadmap
 
 - Follow the 8-week speedrun first (top-down execution order).
-- Use Stage 1-10 as the long-term platform map and progress tracker.
+- Use Stage 0-10 as the long-term platform map and progress tracker.
 - Treat each completed week/stage as portfolio evidence:
   - workflow run links
   - infra plan/apply outputs
@@ -23,6 +23,22 @@ This roadmap is the source of truth for platform status and the learning path fo
 | 6 | Promotion model and release safety | PROD digest promotion from DEV ACR + verification | Explain tag vs digest and supply-chain integrity |
 | 7 | Secrets and operational readiness | Key Vault contract + prereq checks + runbook execution | Explain secret ownership and runtime access model |
 | 8 | Production simulation and portfolio hardening | End-to-end demo runbook + incident drill notes | Walk through "commit -> CI -> image -> CD -> health checks" |
+
+---
+
+## Stage 0 - From Scratch Product Build
+
+Objective: capture the full origin story before DevOps hardening phases.
+
+- [x] Bootstrapped project repository from zero
+- [x] Implemented Node.js/Express Task API from scratch
+- [x] Defined health/readiness/info endpoint contract
+- [x] Added local runtime flow (`npm run dev`) and env contract (`.env.example`)
+- [x] Added local containerized flow (`Dockerfile`, `docker-compose.yml`)
+- [x] Added baseline tests and lint before cloud delivery phases
+
+Outcome:
+The product foundation was built manually end-to-end before CI/CD and cloud maturity stages.
 
 ---
 
@@ -123,6 +139,7 @@ Objective: make deployments predictable, auditable, and environment-aware.
 - [x] Transitional KV bootstrap in CD when existing vault firewall is still `Deny`
 - [x] RBAC propagation wait before Container App revision updates
 - [x] Deprecated old tag-driven direct prod deployment flow
+- [x] Phase 2 status: Terraform CD jobs moved to self-hosted runner in VNet with mandatory preflight gate
 - [ ] Environment protection rules review (required reviewers, prod safeguards)
 - [x] Policy decision recorded: keep `prod destroy` path (manual, explicit reset only)
 
@@ -185,13 +202,38 @@ Objective: move from baseline security to production-grade identity model.
 - [x] Managed identity + RBAC pattern for runtime services
 - [x] Key Vault integration baseline introduced
 - [x] Phase 1 secret-resolution stabilization documented (`RBAC-only + public allow`)
-- [x] Phase 2 migration to private Key Vault + self-hosted runner in VNet
+- [x] Phase 2 migration to private runner-path Key Vault access + self-hosted runner in VNet
 - [x] Secret rotation runbook and ownership model
 - [x] Access review cadence for CI/runtime/human identities
 - [x] Add stronger policy checks (least privilege verification)
+- [x] Phase 2 operating mode is active with pragmatic runtime compatibility (`key_vault_network_mode = public_allow` until CAE VNet migration)
+- [x] Phase 2 operational status in `dev` (strict preflight + runner online + successful apply)
+- [ ] Phase 2 operational status in `prod` (one-time bootstrap + first CD cutover pending)
+- [ ] Phase 3 shared CAE VNet migration (keep shared CAE model) and return runtime mode to `firewall`
 
 Outcome:
 Identity and secret management become auditable and operationally maintainable.
+
+---
+
+## Temporary Constraints Register (Free-tier period)
+
+Track all temporary decisions here until paid-subscription normalization is complete.
+
+| Current temporary state | Why | Risk | Exit criteria | Target stage | Status |
+| --- | --- | --- | --- | --- | --- |
+| Shared CAE model (`prod` uses shared CAE from `dev`) | Free-tier and current subscription limits | Cross-env coupling, narrower blast-radius isolation | Dedicated CAE created and operational for each env | Stage 9 / Phase 3 | Active (temporary) |
+| `key_vault_network_mode = public_allow` + `bypass = AzureServices` | Runtime compatibility before CAE VNet integration | KV network ACL not fully hardened for runtime path | CAE VNet migration done and both envs converged to `firewall` mode | Stage 9 / Phase 3 | Active (temporary) |
+| Shared runner platform in `eastus` (app/runtime remain `uksouth`) | `uksouth` SKU/capacity restrictions for current runner sizing | Extra control-plane latency and split-region operations | Runner platform successfully relocated and stable in `uksouth` | Stage 9 follow-up | Active (temporary) |
+| Trivy targeted exception for `AZU-0013`/`AVD-AZU-0013` | CI must stay blocking while temporary `public_allow` mode is intentional | Normalization debt if exception is forgotten | Remove `.trivyignore` entries immediately after KV returns to `firewall`/`Deny` | Stage 9 / Phase 3 | Active (temporary) |
+
+## Post-paid Normalization Track
+
+- [ ] Create dedicated CAE for `dev` and `prod` (or finish shared-model VNet migration decision if constraints change)
+- [ ] Complete CAE VNet migration path and validate private runtime access for both envs
+- [ ] Return Key Vault network mode to `firewall` (`default_action=Deny`) and remove Trivy exception
+- [ ] Relocate shared runner platform from `eastus` back to `uksouth` and validate runner/CD stability
+- [ ] Add cost controls: budget alerts, runner schedule/patch cadence, and periodic VM right-sizing review
 
 ---
 
