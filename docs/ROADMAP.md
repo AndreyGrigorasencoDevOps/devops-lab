@@ -211,29 +211,23 @@ Objective: move from baseline security to production-grade identity model.
 - [ ] Phase 2 operational status in `prod` (one-time bootstrap + first CD cutover pending)
 - [ ] Phase 3 shared CAE VNet migration (keep shared CAE model) and return runtime mode to `firewall`
 
+Current temporary operating constraints (free-tier period):
+
+- Shared CAE model (`prod` uses shared CAE from `dev`). Why: free-tier/subscription limits. Risk: cross-env coupling and weaker isolation. Exit: dedicated CAE becomes operational for each environment.
+- `key_vault_network_mode = public_allow` + `bypass = AzureServices`. Why: runtime compatibility before CAE VNet integration. Risk: runtime path is not yet fully hardened. Exit: CAE VNet migration completes and both environments return to `firewall`.
+- Shared runner platform in `eastus` while app/runtime stay in `uksouth`. Why: `uksouth` SKU/capacity restrictions. Risk: extra control-plane latency and split-region operations. Exit: runner platform is relocated and stable in `uksouth`.
+- Trivy targeted exception for `AZU-0013` / `AVD-AZU-0013`. Why: CI must stay blocking while `public_allow` is intentionally active. Risk: normalization debt if the ignore stays too long. Exit: remove `.trivyignore` entries immediately after Key Vault returns to `firewall` / `Deny`.
+
+Post-paid normalization track:
+
+- [ ] Create dedicated CAE for `dev` and `prod` (or finalize a different model only if platform constraints materially change)
+- [ ] Complete CAE VNet migration and validate private runtime access for both environments
+- [ ] Return Key Vault network mode to `firewall` (`default_action = Deny`) and remove the Trivy exception
+- [ ] Relocate shared runner platform from `eastus` back to `uksouth` and validate CD stability
+- [ ] Add cost controls: budget alerts, runner schedule/patch cadence, and periodic VM right-sizing review
+
 Outcome:
 Identity and secret management become auditable and operationally maintainable.
-
----
-
-## Temporary Constraints Register (Free-tier period)
-
-Track all temporary decisions here until paid-subscription normalization is complete.
-
-| Current temporary state | Why | Risk | Exit criteria | Target stage | Status |
-| --- | --- | --- | --- | --- | --- |
-| Shared CAE model (`prod` uses shared CAE from `dev`) | Free-tier and current subscription limits | Cross-env coupling, narrower blast-radius isolation | Dedicated CAE created and operational for each env | Stage 9 / Phase 3 | Active (temporary) |
-| `key_vault_network_mode = public_allow` + `bypass = AzureServices` | Runtime compatibility before CAE VNet integration | KV network ACL not fully hardened for runtime path | CAE VNet migration done and both envs converged to `firewall` mode | Stage 9 / Phase 3 | Active (temporary) |
-| Shared runner platform in `eastus` (app/runtime remain `uksouth`) | `uksouth` SKU/capacity restrictions for current runner sizing | Extra control-plane latency and split-region operations | Runner platform successfully relocated and stable in `uksouth` | Stage 9 follow-up | Active (temporary) |
-| Trivy targeted exception for `AZU-0013`/`AVD-AZU-0013` | CI must stay blocking while temporary `public_allow` mode is intentional | Normalization debt if exception is forgotten | Remove `.trivyignore` entries immediately after KV returns to `firewall`/`Deny` | Stage 9 / Phase 3 | Active (temporary) |
-
-## Post-paid Normalization Track
-
-- [ ] Create dedicated CAE for `dev` and `prod` (or finish shared-model VNet migration decision if constraints change)
-- [ ] Complete CAE VNet migration path and validate private runtime access for both envs
-- [ ] Return Key Vault network mode to `firewall` (`default_action=Deny`) and remove Trivy exception
-- [ ] Relocate shared runner platform from `eastus` back to `uksouth` and validate runner/CD stability
-- [ ] Add cost controls: budget alerts, runner schedule/patch cadence, and periodic VM right-sizing review
 
 ---
 
