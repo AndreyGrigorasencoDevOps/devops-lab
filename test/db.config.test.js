@@ -177,3 +177,57 @@ test('db config: explicit DB_SSL=disable overrides automatic Azure TLS', () => {
     ctx.restore()
   }
 })
+
+test('db config: resolveSslConfig honors DB_SSL_REJECT_UNAUTHORIZED true/false/fallback', () => {
+  const ctx = loadDbModule()
+
+  try {
+    assert.deepEqual(
+      ctx.db.resolveSslConfig({
+        DB_SSL: 'require',
+        DB_SSL_REJECT_UNAUTHORIZED: 'true',
+      }),
+      { rejectUnauthorized: true }
+    )
+
+    assert.deepEqual(
+      ctx.db.resolveSslConfig({
+        DB_SSL: 'require',
+        DB_SSL_REJECT_UNAUTHORIZED: 'off',
+      }),
+      { rejectUnauthorized: false }
+    )
+
+    assert.deepEqual(
+      ctx.db.resolveSslConfig({
+        DB_SSL: 'require',
+        DB_SSL_REJECT_UNAUTHORIZED: 'maybe',
+      }),
+      { rejectUnauthorized: false }
+    )
+  } finally {
+    ctx.restore()
+  }
+})
+
+test('db config: resolveSslConfig uses strict defaults for verify-ca and verify-full', () => {
+  const ctx = loadDbModule()
+
+  try {
+    assert.deepEqual(
+      ctx.db.resolveSslConfig({
+        DB_SSL: 'verify-ca',
+      }),
+      { rejectUnauthorized: true }
+    )
+
+    assert.deepEqual(
+      ctx.db.resolveSslConfig({
+        PGSSLMODE: 'verify-full',
+      }),
+      { rejectUnauthorized: true }
+    )
+  } finally {
+    ctx.restore()
+  }
+})
