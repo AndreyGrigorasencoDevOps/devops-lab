@@ -112,7 +112,7 @@ Objective: provision and evolve infra from code, not manual clicks.
 - [x] Infra outputs for deployment and visibility
 - [x] Standardized tags by project/environment
 - [x] Deprecated old `terraform/environments/*` stack layout
-- [ ] Optional modules refactor for larger scale reuse
+- [ ] Optional modules refactor for larger scale reuse (recommended after Stage 9 Phase 3 stabilization)
 
 Outcome:
 Dev/prod infrastructure is reproducible and versioned with Terraform.
@@ -140,7 +140,7 @@ Objective: make deployments predictable, auditable, and environment-aware.
 - [x] RBAC propagation wait before Container App revision updates
 - [x] Deprecated old tag-driven direct prod deployment flow
 - [x] Phase 2 status: Terraform CD jobs moved to self-hosted runner in VNet with mandatory preflight gate
-- [ ] Environment protection rules review (required reviewers, prod safeguards)
+- [x] Environment protection rules review (required reviewers, prod safeguards)
 - [x] Policy decision recorded: keep `prod destroy` path (manual, explicit reset only)
 
 Outcome:
@@ -208,7 +208,7 @@ Objective: move from baseline security to production-grade identity model.
 - [x] Add stronger policy checks (least privilege verification)
 - [x] Phase 2 operating mode is active with pragmatic runtime compatibility (`key_vault_network_mode = public_allow` until CAE VNet migration)
 - [x] Phase 2 operational status in `dev` (strict preflight + runner online + successful apply)
-- [ ] Phase 2 operational status in `prod` (one-time bootstrap + first CD cutover pending)
+- [x] Phase 2 operational status in `prod` (strict preflight + successful CD `plan` -> `apply`)
 - [ ] Phase 3 shared CAE VNet migration (keep shared CAE model) and return runtime mode to `firewall`
 
 Current temporary operating constraints (free-tier period):

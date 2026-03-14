@@ -2,15 +2,17 @@
 
 This checklist is the practical execution guide after local code changes.
 
-## Execution Status (as of March 12, 2026)
+## Execution Status (as of March 13, 2026)
 
 - `DONE`: `dev apply` completed successfully.
 - `DONE`: shared self-hosted runner infrastructure exists and runner is registered online with labels `self-hosted,linux,x64,taskapi-cd,vnet`.
 - `DONE`: `dev-db-password` exists and runtime DB secrets are present in dev Key Vault.
 - `DONE`: `./scripts/check-post-refactor-prereqs.sh --environment dev --repo <owner/repo> --strict-runner` passes.
 - `DONE`: temporary runtime mode is active in tfvars: `key_vault_network_mode = "public_allow"` (`dev` and `prod`).
-- `PENDING`: one-time prod bootstrap (`taskapi-prod-kv-uks` + `prod-db-password`).
-- `PENDING`: prod CD cutover (`plan` -> `apply`) with digest promotion and health validation.
+- `DONE`: one-time prod bootstrap completed (`taskapi-prod-kv-uks`, `prod-db-password`, dedicated vault RBAC, private endpoint).
+- `DONE`: `./scripts/check-post-refactor-prereqs.sh --environment prod --repo <owner/repo> --strict-runner` passes.
+- `DONE`: prod CD cutover (`plan` -> `apply`) completed successfully with digest promotion.
+- `DONE`: GitHub `prod` environment protection rules are enabled.
 
 ## Current temporary mode is intentional
 
@@ -306,7 +308,7 @@ Validate `/health` and `/ready` in prod after apply.
 
 ## 12) Prod-ready discipline (current `public_allow` mode)
 
-- Configure GitHub environment protection rules for `prod`:
+- GitHub `prod` environment protection rules are active:
   - required reviewers;
   - restricted deploy trigger access.
 - Keep `prod destroy` as break-glass path only (manual + explicit reviewer approval).

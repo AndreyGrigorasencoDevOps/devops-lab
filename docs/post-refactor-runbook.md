@@ -4,11 +4,12 @@ This runbook is the operational baseline after Stage 9 Phase 2 hardening.
 
 For a step-by-step cutover execution checklist, use `docs/phase2-cutover-next-steps.md`.
 
-## 0) Current execution status (as of March 12, 2026)
+## 0) Current execution status (as of March 13, 2026)
 
 - `DONE`: Phase 2 cutover is operational in `dev` (runner online, strict preflight passing, dev apply successful).
-- `PENDING`: one-time prod bootstrap (`taskapi-prod-kv-uks` + `prod-db-password`).
-- `PENDING`: first prod CD cutover (`plan` -> `apply`) with digest-promotion validation.
+- `DONE`: one-time prod bootstrap completed (`taskapi-prod-kv-uks` + `prod-db-password` + dedicated prod vault RBAC).
+- `DONE`: first prod CD cutover completed successfully (`plan` -> `apply` with digest promotion).
+- `DONE`: GitHub `prod` environment protection rules are enabled (required reviewer path active).
 - `DECISION`: keep shared CAE model (`prod` continues to use shared CAE in this phase).
 
 ## 1) Current automation baseline
@@ -193,9 +194,9 @@ Do not destroy dedicated Key Vaults during rollback.
 
 ## 8) Prod-ready discipline (while runtime mode is `public_allow`)
 
-- Configure GitHub `prod` environment protection rules:
-  - required reviewers;
-  - restricted deploy permissions.
+- GitHub `prod` environment protection rules are active:
+  - required reviewers are active;
+  - deploy access is environment-gated.
 - Keep `prod destroy` as break-glass only with explicit reviewer check.
 - Maintain operating cadence:
   - quarterly access review;
