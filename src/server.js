@@ -1,3 +1,5 @@
+require('./config/env')
+
 const app = require("./app");
 const initDB = require("./db/init");
 const pool = require("./config/db");

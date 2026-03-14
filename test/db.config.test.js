@@ -37,12 +37,17 @@ function loadDbModule() {
   }
 
   const pgPath = require.resolve('pg')
+  const dotenvPath = require.resolve('dotenv')
   const loggerPath = require.resolve('../src/utils/logger')
+  const envPath = require.resolve('../src/config/env')
   const dbPath = require.resolve('../src/config/db')
 
   const savedPg = require.cache[pgPath]
+  const savedDotenv = require.cache[dotenvPath]
   const savedLogger = require.cache[loggerPath]
+  const savedEnv = require.cache[envPath]
 
+  delete require.cache[envPath]
   delete require.cache[dbPath]
 
   require.cache[pgPath] = {
@@ -61,6 +66,7 @@ function loadDbModule() {
   const db = require('../src/config/db')
 
   function restore() {
+    delete require.cache[envPath]
     delete require.cache[dbPath]
 
     if (savedPg) {
@@ -69,10 +75,22 @@ function loadDbModule() {
       delete require.cache[pgPath]
     }
 
+    if (savedDotenv) {
+      require.cache[dotenvPath] = savedDotenv
+    } else {
+      delete require.cache[dotenvPath]
+    }
+
     if (savedLogger) {
       require.cache[loggerPath] = savedLogger
     } else {
       delete require.cache[loggerPath]
+    }
+
+    if (savedEnv) {
+      require.cache[envPath] = savedEnv
+    } else {
+      delete require.cache[envPath]
     }
   }
 
@@ -83,6 +101,130 @@ function loadDbModule() {
 
   return { db, poolConfigs, pools, loggerState, restore }
 }
+
+test('db config: env loader runs before default pool creation', () => {
+  const poolConfigs = []
+
+  function Pool(config) {
+    poolConfigs.push(config)
+    return {
+      on() {}
+    }
+  }
+
+  const fakeLogger = {
+    info() {},
+    error() {}
+  }
+
+  const fakeDotenv = {
+    config() {
+      process.env.DB_HOST = '127.0.0.1'
+      process.env.DB_PORT = '5432'
+      process.env.DB_USER = 'postgres'
+      process.env.DB_PASSWORD = 'postgres'
+      process.env.DB_NAME = 'taskdb'
+      return { parsed: { DB_PASSWORD: 'postgres' } }
+    }
+  }
+
+  const pgPath = require.resolve('pg')
+  const dotenvPath = require.resolve('dotenv')
+  const loggerPath = require.resolve('../src/utils/logger')
+  const envPath = require.resolve('../src/config/env')
+  const dbPath = require.resolve('../src/config/db')
+
+  const savedNodeEnv = process.env.NODE_ENV
+  const savedDbEnv = {
+    DB_HOST: process.env.DB_HOST,
+    DB_PORT: process.env.DB_PORT,
+    DB_USER: process.env.DB_USER,
+    DB_PASSWORD: process.env.DB_PASSWORD,
+    DB_NAME: process.env.DB_NAME,
+  }
+  const savedPg = require.cache[pgPath]
+  const savedDotenv = require.cache[dotenvPath]
+  const savedLogger = require.cache[loggerPath]
+  const savedEnv = require.cache[envPath]
+
+  process.env.NODE_ENV = 'development'
+  delete process.env.DB_HOST
+  delete process.env.DB_PORT
+  delete process.env.DB_USER
+  delete process.env.DB_PASSWORD
+  delete process.env.DB_NAME
+
+  delete require.cache[envPath]
+  delete require.cache[dbPath]
+
+  require.cache[pgPath] = {
+    id: pgPath,
+    filename: pgPath,
+    loaded: true,
+    exports: { Pool }
+  }
+  require.cache[dotenvPath] = {
+    id: dotenvPath,
+    filename: dotenvPath,
+    loaded: true,
+    exports: fakeDotenv
+  }
+  require.cache[loggerPath] = {
+    id: loggerPath,
+    filename: loggerPath,
+    loaded: true,
+    exports: fakeLogger
+  }
+
+  try {
+    require('../src/config/db')
+
+    assert.deepEqual(poolConfigs[0], {
+      host: '127.0.0.1',
+      user: 'postgres',
+      password: 'postgres',
+      database: 'taskdb',
+      port: 5432,
+    })
+  } finally {
+    delete require.cache[envPath]
+    delete require.cache[dbPath]
+
+    if (savedPg) {
+      require.cache[pgPath] = savedPg
+    } else {
+      delete require.cache[pgPath]
+    }
+
+    if (savedDotenv) {
+      require.cache[dotenvPath] = savedDotenv
+    } else {
+      delete require.cache[dotenvPath]
+    }
+
+    if (savedLogger) {
+      require.cache[loggerPath] = savedLogger
+    } else {
+      delete require.cache[loggerPath]
+    }
+
+    if (savedEnv) {
+      require.cache[envPath] = savedEnv
+    } else {
+      delete require.cache[envPath]
+    }
+
+    process.env.NODE_ENV = savedNodeEnv
+
+    for (const [key, value] of Object.entries(savedDbEnv)) {
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+  }
+})
 
 test('db config: createPool registers handlers and uses local defaults without SSL', () => {
   const ctx = loadDbModule()
