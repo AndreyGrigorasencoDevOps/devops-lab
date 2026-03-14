@@ -50,7 +50,7 @@ jobs:
           path: coverage/lcov.info
 
       - name: Sonar scan
-        if: ${{ env.HAS_SONAR_TOKEN == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        if: ${{ env.HAS_SONAR_TOKEN == 'true' }}
         uses: SonarSource/sonarqube-scan-action@v6
         with:
           args: >

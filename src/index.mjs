@@ -1,3 +1,4 @@
+import './config/env.js';
 import { start } from "./server.js";
 import logger from "./utils/logger.js";
 

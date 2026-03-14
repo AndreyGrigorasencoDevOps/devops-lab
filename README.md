@@ -24,6 +24,7 @@ Node.js (Express) Task API used as a DevOps learning project.
 ## Documentation Map
 
 - Learning roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md)
+- Local development: [docs/local-development.md](./docs/local-development.md)
 - Post-refactor operations: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)
 - Phase 2 manual cutover: [docs/phase2-cutover-next-steps.md](./docs/phase2-cutover-next-steps.md)
 - Legacy archive note: [docs/archive/terraform-environments-legacy.md](./docs/archive/terraform-environments-legacy.md)
@@ -49,18 +50,31 @@ Node.js (Express) Task API used as a DevOps learning project.
 
 ## Local Run
 
+Preferred onboarding:
+
 ```bash
-npm install
+nvm use
+cp .env.example .env
+./scripts/check-local-dev-prereqs.sh
+```
+
+### Host Node + Docker Postgres
+
+```bash
+docker compose up -d db
+npm ci
 npm run dev
 ```
 
 App default URL: `http://localhost:3000`
 
-## Docker Compose
+### Full Docker Compose
 
 ```bash
 docker compose up --build
 ```
+
+See [docs/local-development.md](./docs/local-development.md) for the full macOS + WSL local runbook, troubleshooting, and migration notes.
 
 ## Project Structure
 
@@ -200,4 +214,5 @@ The Terraform deploy identity must have `Key Vault Secrets Officer` on the Key V
 - `npm run lint`
 - `npm test`
 - `npm run test:coverage`
+- `./scripts/check-local-dev-prereqs.sh`
 - `./scripts/check-post-refactor-prereqs.sh`

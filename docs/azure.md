@@ -39,7 +39,8 @@ Database + Key Vault model:
 - PostgreSQL server and app database are created by Terraform.
 - Container App reads all `DB_*` values from Key Vault references.
 - Dedicated Key Vault per environment (`taskapi-dev-kv-uks`, `taskapi-prod-kv-uks`).
-- Key Vault network mode is `firewall` + private endpoint path for CD runner network.
+- Key Vault network mode is `public_allow` + private endpoint path for CD runner network.
+- Target hardened state after CAE VNet migration is `firewall`.
 - `DB_PASSWORD` is manual in env Key Vault as `<env>-db-password`.
 - Terraform writes/updates:
   - `<env>-db-host`

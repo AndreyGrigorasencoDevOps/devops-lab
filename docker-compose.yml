@@ -6,7 +6,9 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      - PORT=3000
       - DB_HOST=db
+      - DB_PORT=5432
       - DB_USER=${DB_USER:?DB_USER is required}
       - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
       - DB_NAME=${DB_NAME:-tasksdb}
@@ -30,6 +32,8 @@ services:
 
   db:
     image: postgres:15
+    ports:
+      - "${LOCAL_DB_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${DB_USER:?DB_USER is required}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}

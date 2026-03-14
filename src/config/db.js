@@ -1,3 +1,5 @@
+require('./env')
+
 const { Pool } = require("pg");
 const logger = require("../utils/logger");
 

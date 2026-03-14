@@ -1,3 +1,5 @@
+require('../config/env')
+
 const pino = require('pino');
 
 const isProduction = process.env.NODE_ENV === 'production';

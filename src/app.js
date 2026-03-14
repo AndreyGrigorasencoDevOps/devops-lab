@@ -1,19 +1,11 @@
+require('./config/env')
+
 const express = require('express');
 const tasksRouter = require('./routes/tasks.routes');
 const httpLogger = require('./middlewares/httpLogger');
 const errorHandler = require('./middlewares/errorHandler');
 const { checkDatabase } = require('./services/readiness.service');
 const logger = require('./utils/logger');
-
-// Load .env only in non-production environments
-if (process.env.NODE_ENV !== "production") {
-  try {
-    require("dotenv").config();
-  } catch {
-    // dotenv is optional; ignore if not installed
-    logger.debug("dotenv not loaded (optional)");
-  }
-}
 
 require('./config/db');
 
