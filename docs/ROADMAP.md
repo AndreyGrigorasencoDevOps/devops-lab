@@ -216,7 +216,7 @@ Current rollout status (repo target state, Azure convergence pending):
 - Terraform now targets dedicated CAEs for both `dev` and `prod` with env-local runtime VNets and env-local Key Vault private endpoints.
 - Terraform tfvars now target `key_vault_network_mode = firewall` with `bypass = None`; Azure must still be converged in the rollout order from the runbook.
 - Shared runner location now targets `uksouth`; relocate the runner from a trusted local shell or temporary break-glass runner, not from the VM being replaced.
-- The temporary Trivy exception has been removed from repo config; Trivy should stay blocking once Azure is converged to the new Key Vault posture.
+- The temporary Trivy exception remains in repo config during the rollout window; remove it only after Azure is converged to the new Key Vault posture and Trivy stays green without it.
 
 Post-paid normalization track:
 
