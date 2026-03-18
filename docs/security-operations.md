@@ -64,7 +64,8 @@ The gate now verifies:
 
 ## 4.1) Trivy policy
 
-- Temporary exception `AZU-0013` / `AVD-AZU-0013` has been removed from repo config.
+- Temporary exception `AZU-0013` / `AVD-AZU-0013` remains approved only for the rollout window.
+- Remove it immediately after both environments are confirmed on Key Vault `firewall` mode and Trivy stays green without the exception.
 - Expected steady-state: repo and Azure both converge to Key Vault `default_action = Deny` and `bypass = None`.
 - If Azure is temporarily behind repo state during rollout, do not reintroduce a long-lived ignore; use the documented rollout order and converge the infra instead.
 
