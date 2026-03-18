@@ -1,7 +1,1 @@
-# TEMP exception for pragmatic runtime mode during Phase 2/3 transition.
-# Remove these entries after:
-# 1) shared CAE VNet migration is complete,
-# 2) `key_vault_network_mode=firewall` is active for dev/prod,
-# 3) Key Vault `default_action` is `Deny` again.
-AZU-0013
-AVD-AZU-0013
+# No temporary Trivy ignores are currently approved.

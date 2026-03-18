@@ -1,56 +1,115 @@
 # Post-Refactor Runbook
 
-This runbook is the operational baseline after Stage 9 Phase 2 hardening.
+This runbook is the operational baseline after the paid-normalization repo changes landed.
 
-For a step-by-step cutover execution checklist, use `docs/phase2-cutover-next-steps.md`.
+The repository now targets:
 
-## 0) Current execution status (as of March 13, 2026)
+- dedicated CAE per environment
+- env-local runtime VNets in `uksouth`
+- env-local Key Vault private endpoints
+- `key_vault_network_mode = "firewall"` with `bypass = None`
+- shared runner target location `uksouth`
+- shared-ops budget metadata under `terraform/shared-ops/`
+- shared runner target size `Standard_B1s`
 
-- `DONE`: Phase 2 cutover is operational in `dev` (runner online, strict preflight passing, dev apply successful).
-- `DONE`: one-time prod bootstrap completed (`taskapi-prod-kv-uks` + `prod-db-password` + dedicated prod vault RBAC).
-- `DONE`: first prod CD cutover completed successfully (`plan` -> `apply` with digest promotion).
-- `DONE`: GitHub `prod` environment protection rules are enabled (required reviewer path active).
-- `DECISION`: keep shared CAE model (`prod` continues to use shared CAE in this phase).
+Important:
 
-## 1) Current automation baseline
+- The repo target state is ahead of the currently deployed Azure state until you run the rollout sequence below.
+- Use `docs/phase2-cutover-next-steps.md` only as historical context; it no longer reflects the active target architecture.
+
+## 0) Current execution status (as of March 17, 2026)
+
+- `DONE`: Phase 2 cutover remains the last confirmed Azure baseline.
+- `DONE`: Repo configuration now targets paid normalization.
+- `DONE`: shared runner target size has been reduced to `Standard_B1s` for cost control.
+- `NEXT`: converge Azure in this order: `dev`, `prod`, shared runner relocation, shared-ops apply.
+
+## 0.1 Repo QA status
+
+Cross-checks already completed in the repository:
+
+- `terraform fmt -recursive terraform`
+- `terraform -chdir=terraform validate`
+- `terraform -chdir=terraform/shared-ops validate`
+- `bash -n scripts/check-post-refactor-prereqs.sh`
+- `git diff --check`
+
+What is still pending because it requires live Azure execution:
+
+- `dev` rollout to the dedicated CAE/runtime VNet target
+- `prod` rollout to the dedicated CAE/runtime VNet target
+- shared runner relocation to `uksouth`
+- shared-ops `apply`
+- health/readiness validation after each environment cutover
+- runner private DNS validation after Key Vault PE migration
+- Azure Start/Stop VMs off-hours automation deployment
+
+## 1) Automation baseline
 
 - `CI` workflow (`.github/workflows/ci.yml`) runs on PRs to `main`.
 - `CI Push` workflow (`.github/workflows/ci-push.yml`) runs on `push` to `main` and publishes immutable `sha-<short_sha>` image tags.
-- `CD` workflow (`.github/workflows/cd.yml`) is manual (`workflow_dispatch`) and keeps digest promotion for prod.
+- `CD` workflow (`.github/workflows/cd.yml`) remains manual (`workflow_dispatch`) and keeps digest promotion for prod.
 - Terraform jobs in CD run on self-hosted runner labels:
   - `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`
-- CD enforces preflight security checks before `plan/apply`:
+- CD enforces preflight before `plan/apply`:
   - `./scripts/check-post-refactor-prereqs.sh --environment <dev|prod> --strict-runner`
 
-## 1.1 Security operating model (active)
+## 1.1 Target security model
 
 - Dedicated Key Vault per environment:
   - `taskapi-dev-kv-uks`
   - `taskapi-prod-kv-uks`
-- Key Vault network mode: `public_allow` (temporary runtime compatibility until CAE VNet migration).
-- Key Vault private endpoint enabled for each environment.
+- Dedicated runtime VNet per environment:
+  - `taskapi-dev-rt-vnet-uks`
+  - `taskapi-prod-rt-vnet-uks`
+- Dedicated CAE per environment:
+  - `taskapi-dev-cae-vnet-uks`
+  - `taskapi-prod-cae-vnet-uks`
 - Shared runner VNet + private DNS zone:
   - DNS zone: `privatelink.vaultcore.azure.net`
-  - current shared runner location: `eastus` (app/runtime stays in `uksouth`)
-- Runtime compatibility mode remains pragmatic:
-  - Key Vault `bypass = AzureServices` is intentionally retained until Container Apps VNet migration.
+  - target shared runner location: `uksouth`
+  - target shared runner VM size: `Standard_B1s`
+- Steady-state Key Vault posture:
+  - `default_action = Deny`
+  - `bypass = None`
 
-## 1.2 Temporary deviations and closure triggers
+## 1.2 Rollout order
 
-Temporary constraints are tracked in the roadmap register:
+Do not reorder these steps:
 
-- `docs/ROADMAP.md` -> `Temporary Constraints Register (Free-tier period)`.
+1. Apply `dev` and validate runtime/private-path health.
+2. Apply `prod` and validate runtime/private-path health.
+3. Relocate the shared runner from `eastus` to `uksouth`.
+4. Apply the shared-ops layer and operationalize the runner office-hours schedule and patch cadence.
 
-Closure order (do not reorder):
+Important nuance:
 
-1. Complete shared CAE VNet migration and validate `dev`/`prod` runtime path.
-2. Switch `key_vault_network_mode` from `public_allow` to `firewall` in both tfvars and run converging applies.
-3. Remove temporary Trivy exception (`AZU-0013`/`AVD-AZU-0013`) and confirm PR + Push workflows stay green.
-4. Relocate shared runner platform from `eastus` to `uksouth` when subscription/SKU capacity allows.
+- The shared runner platform is still owned by the `dev` Terraform state.
+- Because the repo target for `shared_runner_location` is now `uksouth`, a full `dev` apply can include the runner relocation unless you intentionally defer it.
+- If you want to keep the rollout in the exact phase order above, run the pre-relocation `dev` plan/apply with a temporary override:
+  - `-var="shared_runner_location=eastus"`
+- Then run the dedicated runner-relocation apply later from a trusted local shell without that override.
 
-## 2) One-time setup (required)
+## 1.3 Why `terraform/shared-ops` exists
 
-## 2.1 GitHub environment variables (`dev` and `prod`)
+The env root under `terraform/` still manages environment-bound infrastructure such as app, DB, Key Vault, CAE, runtime VNet, and the shared runner VM itself.
+
+`terraform/shared-ops/` was added for subscription-scoped operational controls that do not belong to either the `dev` state or the `prod` state:
+
+- monthly subscription budget
+- budget notification contacts
+- runner office-hours metadata
+- runner patch/right-sizing metadata
+
+This split keeps shared operational controls in their own Terraform state so that:
+
+- `dev` and `prod` plans stay focused on runtime infrastructure
+- shared cost-control changes do not create noise or drift in env applies
+- subscription-scope artifacts are not awkwardly "owned" by one environment by accident
+
+## 2) One-time setup
+
+### 2.1 GitHub environment variables (`dev` and `prod`)
 
 Required in each GitHub environment:
 
@@ -60,11 +119,11 @@ Required in each GitHub environment:
 - `ACR_NAME`
 - `ACR_LOGIN_SERVER`
 - `TF_APP_ENV_VARS_JSON` (optional)
-- `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY` (required when creating/updating shared runner VM)
+- `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY`
 
-## 2.2 Key Vault DB password bootstrap
+### 2.2 Key Vault DB password bootstrap
 
-Current default mode is `public_allow`, so bootstrap secrets directly:
+Repo tfvars now target `firewall`, so the first converging applies may require a temporary local `/32` allowlist for bootstrap work.
 
 ```bash
 az keyvault secret set --vault-name taskapi-dev-kv-uks --name dev-db-password --value "<strong_password_dev>"
@@ -73,60 +132,64 @@ az keyvault secret set --vault-name taskapi-prod-kv-uks --name prod-db-password 
 
 Important:
 
-- `az keyvault secret set` uses your current Azure CLI login principal, not the GitHub deploy identity.
-- Your human/bootstrap principal needs `Key Vault Secrets Officer` (or broader equivalent) on the target vault scope before manual secret bootstrap will work.
+- `az keyvault secret set` uses your Azure CLI principal, not the GitHub deploy identity.
+- Your bootstrap principal needs `Key Vault Secrets Officer` (or broader equivalent) on the target vault scope.
+- If bootstrap or local Terraform hits `ForbiddenByFirewall`, temporarily add your `/32` to `key_vault_allowed_ip_cidrs`, complete the step, then remove it.
 
-If you temporarily switch network mode to `firewall`, add/remove your local `/32` allowlist around bootstrap and local Terraform runs.
-
-Terraform manages runtime secrets automatically:
+Terraform continues to manage runtime metadata secrets automatically:
 
 - `<env>-db-host`
 - `<env>-db-port`
 - `<env>-db-user`
 - `<env>-db-name`
 
-## 2.3 Required Azure RBAC
-
-For each environment (`dev`, `prod`):
-
-- Deploy identity (GitHub OIDC app/service principal):
-  - `Key Vault Secrets Officer` on environment Key Vault scope.
-- Runtime user-assigned identity (`<project>-<env>-ca-identity`):
-  - `Key Vault Secrets User` on environment Key Vault scope.
-
 ## 3) Deployment sequence
 
 Bootstrap note:
 
-- If shared runner infrastructure does not exist yet, run initial `dev` Terraform apply once from a trusted local shell (or temporary break-glass `ubuntu-latest`) to create runner VNet/VM/DNS assets first.
-- Before first full `dev` plan/apply, ensure `dev-db-password` already exists in `taskapi-dev-kv-uks`.
-- Before first full `prod` plan/apply, run one-time local bootstrap for:
-  - dedicated prod Key Vault,
-  - manual `prod-db-password` secret creation before bootstrap steps that read DB password data,
-  - prod Key Vault private endpoint,
-  - runtime identity + `Key Vault Secrets User` assignment,
-  - manual deploy identity `Key Vault Secrets Officer` assignment,
-  - strict preflight validation before GitHub CD.
-- After switching tfvars to `key_vault_network_mode = public_allow`, run one apply per env to converge Key Vault ACL from `Deny` to `Allow`.
-- For local Terraform `plan/apply`, always pass explicit `-var="container_image_tag=sha-<short_sha>"` (do not rely on default `dev` tag).
-- For local Terraform runs in temporary `firewall` mode, also pass `-var='key_vault_allowed_ip_cidrs=["<your_ip>/32"]'`.
+- If the shared runner must be recreated, do that step from a trusted local shell or temporary break-glass GitHub-hosted runner, not from the self-hosted runner being replaced.
+- Before the first full `dev` plan/apply, ensure `dev-db-password` already exists.
+- Before the first full `prod` plan/apply, ensure `prod-db-password` already exists.
+- For local Terraform `plan/apply`, always pass explicit `-var="container_image_tag=sha-<short_sha>"`.
+- The new budget runner bootstrap now adds a `2 GiB` swap file; that safeguard takes effect when the runner VM is recreated or relocated.
 
-1. Merge to `main` and capture `image_tag` from `CI Push` summary.
-2. Run CD `dev plan` with that image tag.
-3. Run CD `dev apply` with the same image tag.
-4. Validate dev endpoints: `/health` and `/ready` return `200`.
-5. Run CD `prod plan` with the same image tag.
-6. Run CD `prod apply` with the same image tag.
-7. Validate prod endpoints: `/health` and `/ready` return `200`.
-
-CLI examples:
+1. Merge to `main` and capture `image_tag` from the `CI Push` summary.
+2. Run `dev` `plan` and `apply` with that image tag.
+3. Validate `dev` `/health` and `/ready`.
+4. From the runner path, confirm private DNS resolution for `taskapi-dev-kv-uks`.
+5. Run `prod` `plan` and `apply` with the same image tag.
+6. Validate `prod` `/health` and `/ready`.
+7. From a non-self-hosted path, relocate the shared runner to `uksouth`.
+8. Apply the shared-ops layer:
 
 ```bash
-gh workflow run cd.yml -f environment=dev -f action=plan -f image_tag=sha-<short_sha>
-gh workflow run cd.yml -f environment=dev -f action=apply -f image_tag=sha-<short_sha>
-gh workflow run cd.yml -f environment=prod -f action=plan -f image_tag=sha-<short_sha>
-gh workflow run cd.yml -f environment=prod -f action=apply -f image_tag=sha-<short_sha>
+terraform -chdir=terraform/shared-ops init -backend-config=backend/shared.hcl -reconfigure
+terraform -chdir=terraform/shared-ops apply -var-file=vars/shared.tfvars
 ```
+
+9. Deploy Azure Start/Stop VMs during off-hours using the metadata in `terraform/shared-ops/vars/shared.tfvars`.
+
+## 3.1 Exact next steps to make the rollout work
+
+Use this checklist in order:
+
+1. Ensure `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY` is present in both GitHub environments.
+2. Ensure `dev-db-password` and `prod-db-password` exist in their dedicated Key Vaults.
+3. Merge the repo state to `main` and capture the immutable `sha-<short_sha>` image tag from `CI Push`.
+4. From a trusted local shell, run `dev` `plan`, then `dev` `apply`, using a temporary `-var="shared_runner_location=eastus"` override if you want to postpone the runner move until the dedicated relocation step.
+5. Validate `dev`:
+   - `GET /health` returns `200`
+   - `GET /ready` returns `200`
+   - preflight passes with `--strict-runner`
+   - Key Vault resolves privately from the runner path
+6. Run `prod` `plan`, then `prod` `apply`, using the same image tag.
+7. Validate `prod` with the same checks.
+8. From a non-self-hosted path, relocate the shared runner so the new `Standard_B1s` VM lands in `uksouth`.
+9. Re-register the GitHub runner if needed and confirm labels:
+   - `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`
+10. Apply `terraform/shared-ops`.
+11. Deploy Azure Start/Stop VMs off-hours automation using the schedule values from `terraform/shared-ops/vars/shared.tfvars`.
+12. Record the first patch window and the first monthly Azure Advisor right-sizing review.
 
 ## 4) Mandatory preflight checks
 
@@ -138,18 +201,17 @@ Local/manual:
 ./scripts/check-post-refactor-prereqs.sh --environment prod --strict-runner
 ```
 
-Preflight sequencing:
+The preflight now validates:
 
-- Use relaxed mode (`without --strict-runner`) before runner registration.
-- Use strict mode (`with --strict-runner`) after runner registration and before every `plan/apply`.
-
-The preflight validates:
-
-- target env uses dedicated Key Vault (not shared)
-- approved Key Vault network mode (`public_allow` now, `firewall` later) + private endpoint posture
-- required DB password secret in env Key Vault
-- runtime/deploy identity RBAC on env Key Vault
-- shared runner VNet/subnets/private DNS linkage
+- dedicated Key Vault per env
+- dedicated CAE per env
+- expected Key Vault mode and bypass for that env
+- DB password secret presence
+- runtime/deploy identity RBAC on the env Key Vault
+- shared runner VNet/private DNS linkage
+- runtime VNet/private DNS linkage
+- runner/runtime VNet peering
+- Key Vault private endpoint placement in the env runtime PE subnet
 - runner VM no-public-IP posture
 - optional GitHub runner registration status by labels
 
@@ -160,14 +222,9 @@ Ownership:
 - `*-db-password`: platform owner rotates manually in Key Vault.
 - `*-db-host/port/user/name`: Terraform-owned runtime metadata.
 
-Rotation SLA:
-
-- Production DB password rotation every 90 days.
-- Dev DB password rotation every 90 days or on-demand after incidents.
-
 Rotation steps:
 
-1. Set a new version for `<env>-db-password` in env Key Vault.
+1. Set a new version for `<env>-db-password` in the env Key Vault.
 2. Run CD `plan` then `apply` for the same env.
 3. Verify `/ready` and application DB connectivity.
 4. Record rotation date and actor in ops notes.
@@ -185,35 +242,20 @@ Quarterly checklist:
 
 If emergency rollback is needed:
 
-1. Temporarily switch CD Terraform jobs to `ubuntu-latest`.
-2. Keep (or revert to) `key_vault_network_mode = public_allow` in target tfvars.
-3. Run `plan` then `apply` for affected environment.
-4. Restore hardened configuration after incident is resolved (for example, after CAE VNet migration to support `firewall` mode).
+1. Temporarily switch CD Terraform jobs to `ubuntu-latest` or use a trusted local shell.
+2. Add a temporary local `/32` allowlist only if bootstrap access is required.
+3. Run `plan` then `apply` for the affected environment.
+4. Restore the hardened `firewall` / `bypass = None` posture after the incident is resolved.
 
 Do not destroy dedicated Key Vaults during rollback.
 
-## 8) Prod-ready discipline (while runtime mode is `public_allow`)
+## 8) Ongoing operations
 
-- GitHub `prod` environment protection rules are active:
-  - required reviewers are active;
-  - deploy access is environment-gated.
+- Keep GitHub `prod` environment protection rules enabled.
 - Keep `prod destroy` as break-glass only with explicit reviewer check.
-- Maintain operating cadence:
-  - quarterly access review;
-  - 90-day prod DB password rotation;
-  - runner VM patch + service health review.
-
-## 9) Next phase: Shared CAE VNet migration (planned)
-
-Goal: move runtime path to private connectivity and return Key Vault mode to `firewall`.
-
-1. Create a new shared CAE with VNet integration (parallel to current shared CAE).
-2. Add runtime private path from CAE VNet to Key Vault access for `dev` and `prod`.
-3. Migrate `dev` app to new shared CAE; validate health/readiness.
-4. Migrate `prod` app to new shared CAE; validate health/readiness.
-5. Switch `dev/prod` tfvars from `public_allow` back to `firewall`.
-
-Rollback:
-
-- move apps back to previous shared CAE;
-- restore `key_vault_network_mode = public_allow`.
+- Maintain the following cadence:
+  - quarterly access review
+  - 90-day DB password rotation
+  - runner office-hours schedule review
+  - weekly Wednesday `22:00` `Europe/Paris` patch window
+  - monthly Azure Advisor runner right-sizing review

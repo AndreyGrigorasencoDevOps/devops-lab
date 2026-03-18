@@ -22,6 +22,7 @@ RUNNER_SUBNET_NAME=""
 RUNNER_PE_SUBNET_NAME=""
 RUNNER_DNS_ZONE_NAME=""
 RUNNER_VM_NAME=""
+RUNNER_EXPECTED_LOCATION=""
 
 # Defaults aligned with terraform/variables.tf
 DEFAULT_RUNNER_VNET_NAME="taskapi-shared-runner-vnet-uks"
@@ -29,6 +30,10 @@ DEFAULT_RUNNER_SUBNET_NAME="taskapi-shared-runner-snet"
 DEFAULT_RUNNER_PE_SUBNET_NAME="taskapi-shared-pe-snet"
 DEFAULT_RUNNER_DNS_ZONE_NAME="privatelink.vaultcore.azure.net"
 DEFAULT_RUNNER_VM_NAME="taskapi-shared-cd-runner-01"
+DEFAULT_RUNTIME_VNET_SUFFIX="-rt-vnet-uks"
+DEFAULT_CAE_SUBNET_SUFFIX="-cae-snet"
+DEFAULT_RUNTIME_PE_SUBNET_SUFFIX="-pe-snet"
+DEFAULT_CAE_SUFFIX="-cae-uks"
 
 FAILURES=0
 WARNINGS=0
@@ -38,6 +43,11 @@ ENV_KV_RG=""
 ENV_KV_MODE=""
 ENV_KV_PE_ENABLED="true"
 ENV_USE_SHARED_KV="false"
+ENV_USE_SHARED_CAE="false"
+ENV_CAE_NAME=""
+ENV_RUNTIME_VNET_NAME=""
+ENV_CAE_SUBNET_NAME=""
+ENV_RUNTIME_PE_SUBNET_NAME=""
 
 usage() {
   cat <<'USAGE'
@@ -64,12 +74,13 @@ Options:
   -h, --help                     Show this help
 
 Read-only checks:
-  1) Terraform intent for target env (dedicated KV + approved network mode + private endpoint)
+  1) Terraform intent for target env (dedicated KV + dedicated CAE + approved network mode + private endpoint)
   2) Key Vault existence, network posture, and DB secret contract
   3) Runtime identity role scope (`Key Vault Secrets User` on env KV)
   4) Deploy identity role scope (`Key Vault Secrets Officer` on env KV)
   5) Shared runner network + private DNS prerequisites
-  6) Optional GitHub runner readiness check for labels `taskapi-cd,vnet`
+  6) Runtime VNet / CAE / peering prerequisites
+  7) Optional GitHub runner readiness check for labels `taskapi-cd,vnet`
 USAGE
 }
 
@@ -143,13 +154,20 @@ infer_repo() {
 
 resolve_env_settings() {
   local tfvars_file
+  local dev_tfvars_file
   local use_shared_runner_platform
   local tf_runner_rg
 
   tfvars_file="${REPO_ROOT}/terraform/vars/${TARGET_ENV}.tfvars"
+  dev_tfvars_file="${REPO_ROOT}/terraform/vars/dev.tfvars"
   if [[ ! -f "${tfvars_file}" ]]; then
     fail "Missing tfvars file: ${tfvars_file}"
     return
+  fi
+
+  ENV_USE_SHARED_CAE="$(extract_tfvar_bool "${tfvars_file}" "use_shared_cae")"
+  if [[ -z "${ENV_USE_SHARED_CAE}" ]]; then
+    ENV_USE_SHARED_CAE="false"
   fi
 
   ENV_USE_SHARED_KV="$(extract_tfvar_bool "${tfvars_file}" "use_shared_key_vault")"
@@ -181,6 +199,26 @@ resolve_env_settings() {
     ENV_KV_PE_ENABLED="true"
   fi
 
+  ENV_CAE_NAME="$(extract_tfvar_string "${tfvars_file}" "container_app_environment_name")"
+  if [[ -z "${ENV_CAE_NAME}" ]]; then
+    ENV_CAE_NAME="${PROJECT_NAME}-${TARGET_ENV}${DEFAULT_CAE_SUFFIX}"
+  fi
+
+  ENV_RUNTIME_VNET_NAME="$(extract_tfvar_string "${tfvars_file}" "runtime_virtual_network_name")"
+  if [[ -z "${ENV_RUNTIME_VNET_NAME}" ]]; then
+    ENV_RUNTIME_VNET_NAME="${PROJECT_NAME}-${TARGET_ENV}${DEFAULT_RUNTIME_VNET_SUFFIX}"
+  fi
+
+  ENV_CAE_SUBNET_NAME="$(extract_tfvar_string "${tfvars_file}" "container_app_environment_infrastructure_subnet_name")"
+  if [[ -z "${ENV_CAE_SUBNET_NAME}" ]]; then
+    ENV_CAE_SUBNET_NAME="${PROJECT_NAME}-${TARGET_ENV}${DEFAULT_CAE_SUBNET_SUFFIX}"
+  fi
+
+  ENV_RUNTIME_PE_SUBNET_NAME="$(extract_tfvar_string "${tfvars_file}" "runtime_private_endpoints_subnet_name")"
+  if [[ -z "${ENV_RUNTIME_PE_SUBNET_NAME}" ]]; then
+    ENV_RUNTIME_PE_SUBNET_NAME="${PROJECT_NAME}-${TARGET_ENV}${DEFAULT_RUNTIME_PE_SUBNET_SUFFIX}"
+  fi
+
   use_shared_runner_platform="$(extract_tfvar_bool "${tfvars_file}" "enable_shared_runner_platform")"
   if [[ -z "${use_shared_runner_platform}" ]]; then
     use_shared_runner_platform="false"
@@ -199,6 +237,16 @@ resolve_env_settings() {
   RUNNER_PE_SUBNET_NAME="$(coalesce "${RUNNER_PE_SUBNET_NAME}" "$(extract_tfvar_string "${tfvars_file}" "shared_runner_private_endpoints_subnet_name")" "${DEFAULT_RUNNER_PE_SUBNET_NAME}")"
   RUNNER_DNS_ZONE_NAME="$(coalesce "${RUNNER_DNS_ZONE_NAME}" "$(extract_tfvar_string "${tfvars_file}" "shared_runner_private_dns_zone_name")" "${DEFAULT_RUNNER_DNS_ZONE_NAME}")"
   RUNNER_VM_NAME="$(coalesce "${RUNNER_VM_NAME}" "$(extract_tfvar_string "${tfvars_file}" "shared_runner_vm_name")" "${DEFAULT_RUNNER_VM_NAME}")"
+
+  if [[ -f "${dev_tfvars_file}" ]]; then
+    RUNNER_EXPECTED_LOCATION="$(coalesce \
+      "${RUNNER_EXPECTED_LOCATION}" \
+      "$(extract_tfvar_string "${dev_tfvars_file}" "shared_runner_location")" \
+      "$(extract_tfvar_string "${dev_tfvars_file}" "location")" \
+      "uksouth")"
+  else
+    RUNNER_EXPECTED_LOCATION="$(coalesce "${RUNNER_EXPECTED_LOCATION}" "uksouth")"
+  fi
 }
 
 check_key_vault_secret_exists() {
@@ -346,8 +394,10 @@ check_github_runner_readiness() {
 
 check_runner_infra_in_azure() {
   local vnet_id
+  local vnet_location
   local vm_power_state
   local vm_public_ip_count
+  local vm_location
   local dns_link_count
 
   if [[ -z "${RUNNER_RESOURCE_GROUP}" || -z "${RUNNER_VNET_NAME}" || -z "${RUNNER_PE_SUBNET_NAME}" || -z "${RUNNER_DNS_ZONE_NAME}" ]]; then
@@ -364,6 +414,18 @@ check_runner_infra_in_azure() {
     return
   fi
   pass "Runner VNet '${RUNNER_VNET_NAME}' exists"
+
+  vnet_location="$(az network vnet show \
+    --resource-group "${RUNNER_RESOURCE_GROUP}" \
+    --name "${RUNNER_VNET_NAME}" \
+    --query location -o tsv 2>/dev/null || true)"
+  if [[ -n "${RUNNER_EXPECTED_LOCATION}" ]]; then
+    if [[ "${vnet_location}" == "${RUNNER_EXPECTED_LOCATION}" ]]; then
+      pass "Runner VNet is in expected region '${RUNNER_EXPECTED_LOCATION}'"
+    else
+      fail "Runner VNet location is '${vnet_location}' (expected '${RUNNER_EXPECTED_LOCATION}')"
+    fi
+  fi
 
   if az network vnet subnet show \
     --resource-group "${RUNNER_RESOURCE_GROUP}" \
@@ -422,6 +484,18 @@ check_runner_infra_in_azure() {
       fail "Runner VM '${RUNNER_VM_NAME}' is not running (state: ${vm_power_state})"
     fi
 
+    vm_location="$(az vm show \
+      --resource-group "${RUNNER_RESOURCE_GROUP}" \
+      --name "${RUNNER_VM_NAME}" \
+      --query location -o tsv 2>/dev/null || true)"
+    if [[ -n "${RUNNER_EXPECTED_LOCATION}" ]]; then
+      if [[ "${vm_location}" == "${RUNNER_EXPECTED_LOCATION}" ]]; then
+        pass "Runner VM is in expected region '${RUNNER_EXPECTED_LOCATION}'"
+      else
+        fail "Runner VM location is '${vm_location}' (expected '${RUNNER_EXPECTED_LOCATION}')"
+      fi
+    fi
+
     vm_public_ip_count="$(az vm list-ip-addresses \
       --resource-group "${RUNNER_RESOURCE_GROUP}" \
       --name "${RUNNER_VM_NAME}" \
@@ -432,6 +506,109 @@ check_runner_infra_in_azure() {
     else
       fail "Runner VM '${RUNNER_VM_NAME}' has public IPs attached (expected outbound-only posture)"
     fi
+  fi
+}
+
+check_runtime_network_in_azure() {
+  local runtime_vnet_id
+  local runner_vnet_id
+  local runtime_dns_link_count
+  local runtime_to_runner_peering_count
+  local runner_to_runtime_peering_count
+  local cae_infra_subnet_id
+  local runtime_pe_subnet_id
+  local key_vault_pe_subnet_id
+
+  if [[ "${ENV_USE_SHARED_CAE}" == "true" ]]; then
+    fail "Terraform tfvars for ${TARGET_ENV} still has use_shared_cae=true (paid normalization requires a dedicated CAE per env)"
+    return
+  fi
+
+  runtime_vnet_id="$(az network vnet show \
+    --resource-group "${ENV_KV_RG}" \
+    --name "${ENV_RUNTIME_VNET_NAME}" \
+    --query id -o tsv 2>/dev/null || true)"
+  if [[ -z "${runtime_vnet_id}" ]]; then
+    fail "Runtime VNet '${ENV_RUNTIME_VNET_NAME}' was not found in '${ENV_KV_RG}'"
+    return
+  fi
+  pass "Runtime VNet '${ENV_RUNTIME_VNET_NAME}' exists"
+
+  if az network vnet subnet show \
+    --resource-group "${ENV_KV_RG}" \
+    --vnet-name "${ENV_RUNTIME_VNET_NAME}" \
+    --name "${ENV_CAE_SUBNET_NAME}" \
+    --query id -o tsv >/dev/null 2>&1; then
+    pass "Runtime CAE subnet '${ENV_CAE_SUBNET_NAME}' exists"
+  else
+    fail "Runtime CAE subnet '${ENV_CAE_SUBNET_NAME}' is missing"
+  fi
+
+  runtime_pe_subnet_id="$(az network vnet subnet show \
+    --resource-group "${ENV_KV_RG}" \
+    --vnet-name "${ENV_RUNTIME_VNET_NAME}" \
+    --name "${ENV_RUNTIME_PE_SUBNET_NAME}" \
+    --query id -o tsv 2>/dev/null || true)"
+  if [[ -n "${runtime_pe_subnet_id}" ]]; then
+    pass "Runtime private-endpoints subnet '${ENV_RUNTIME_PE_SUBNET_NAME}' exists"
+  else
+    fail "Runtime private-endpoints subnet '${ENV_RUNTIME_PE_SUBNET_NAME}' is missing"
+  fi
+
+  runtime_dns_link_count="$(az network private-dns link vnet list \
+    --resource-group "${RUNNER_RESOURCE_GROUP}" \
+    --zone-name "${RUNNER_DNS_ZONE_NAME}" \
+    --query "[?virtualNetwork.id=='${runtime_vnet_id}'] | length(@)" -o tsv 2>/dev/null || echo "0")"
+  if [[ "${runtime_dns_link_count}" =~ ^[0-9]+$ ]] && [[ "${runtime_dns_link_count}" -ge 1 ]]; then
+    pass "Private DNS zone '${RUNNER_DNS_ZONE_NAME}' is linked to runtime VNet"
+  else
+    fail "Private DNS zone '${RUNNER_DNS_ZONE_NAME}' is not linked to runtime VNet '${ENV_RUNTIME_VNET_NAME}'"
+  fi
+
+  runner_vnet_id="$(az network vnet show \
+    --resource-group "${RUNNER_RESOURCE_GROUP}" \
+    --name "${RUNNER_VNET_NAME}" \
+    --query id -o tsv 2>/dev/null || true)"
+  if [[ -n "${runner_vnet_id}" ]]; then
+    runtime_to_runner_peering_count="$(az network vnet peering list \
+      --resource-group "${ENV_KV_RG}" \
+      --vnet-name "${ENV_RUNTIME_VNET_NAME}" \
+      --query "[?remoteVirtualNetwork.id=='${runner_vnet_id}'] | length(@)" -o tsv 2>/dev/null || echo "0")"
+    if [[ "${runtime_to_runner_peering_count}" =~ ^[0-9]+$ ]] && [[ "${runtime_to_runner_peering_count}" -ge 1 ]]; then
+      pass "Runtime VNet peering to shared runner VNet exists"
+    else
+      fail "Runtime VNet peering to shared runner VNet is missing"
+    fi
+
+    runner_to_runtime_peering_count="$(az network vnet peering list \
+      --resource-group "${RUNNER_RESOURCE_GROUP}" \
+      --vnet-name "${RUNNER_VNET_NAME}" \
+      --query "[?remoteVirtualNetwork.id=='${runtime_vnet_id}'] | length(@)" -o tsv 2>/dev/null || echo "0")"
+    if [[ "${runner_to_runtime_peering_count}" =~ ^[0-9]+$ ]] && [[ "${runner_to_runtime_peering_count}" -ge 1 ]]; then
+      pass "Shared runner VNet peering back to runtime VNet exists"
+    else
+      fail "Shared runner VNet peering back to runtime VNet is missing"
+    fi
+  fi
+
+  cae_infra_subnet_id="$(az containerapp env show \
+    --resource-group "${ENV_KV_RG}" \
+    --name "${ENV_CAE_NAME}" \
+    --query properties.vnetConfiguration.infrastructureSubnetId -o tsv 2>/dev/null || true)"
+  if [[ -n "${cae_infra_subnet_id}" ]]; then
+    pass "Container Apps Environment '${ENV_CAE_NAME}' exists and is attached to a VNet subnet"
+  else
+    fail "Container Apps Environment '${ENV_CAE_NAME}' is missing or has no infrastructure subnet attached"
+  fi
+
+  key_vault_pe_subnet_id="$(az network private-endpoint show \
+    --resource-group "${ENV_KV_RG}" \
+    --name "${PROJECT_NAME}-${TARGET_ENV}-kv-pe-uks" \
+    --query subnet.id -o tsv 2>/dev/null || true)"
+  if [[ -n "${key_vault_pe_subnet_id}" && "${key_vault_pe_subnet_id}" == "${runtime_pe_subnet_id}" ]]; then
+    pass "Key Vault private endpoint is attached to the env runtime private-endpoints subnet"
+  else
+    fail "Key Vault private endpoint is not attached to the env runtime private-endpoints subnet"
   fi
 }
 
@@ -543,9 +720,11 @@ printf 'Target env: %s\n' "${TARGET_ENV}"
 printf 'Repo: %s\n' "${REPO:-n/a}"
 printf 'Project: %s\n' "${PROJECT_NAME:-n/a}"
 printf 'Env Key Vault: %s (rg: %s)\n' "${ENV_KV_NAME:-n/a}" "${ENV_KV_RG:-n/a}"
+printf 'Env CAE / runtime VNet: %s / %s\n' "${ENV_CAE_NAME:-n/a}" "${ENV_RUNTIME_VNET_NAME:-n/a}"
 printf 'Runner RG/VNet: %s / %s\n' "${RUNNER_RESOURCE_GROUP:-n/a}" "${RUNNER_VNET_NAME:-n/a}"
 printf 'Runner PE subnet: %s\n' "${RUNNER_PE_SUBNET_NAME:-n/a}"
 printf 'Runner DNS zone: %s\n' "${RUNNER_DNS_ZONE_NAME:-n/a}"
+printf 'Runner expected location: %s\n' "${RUNNER_EXPECTED_LOCATION:-n/a}"
 printf 'Strict runner mode: %s\n' "${STRICT_RUNNER}"
 printf '\n'
 
@@ -562,6 +741,12 @@ else
       fail "Terraform tfvars for ${TARGET_ENV} still has use_shared_key_vault=true (Phase 2 requires dedicated Key Vault per env)"
     else
       pass "Terraform tfvars for ${TARGET_ENV} uses dedicated Key Vault"
+    fi
+
+    if [[ "${ENV_USE_SHARED_CAE}" == "true" ]]; then
+      fail "Terraform tfvars for ${TARGET_ENV} still has use_shared_cae=true (paid normalization requires a dedicated CAE per env)"
+    else
+      pass "Terraform tfvars for ${TARGET_ENV} uses a dedicated CAE"
     fi
 
     if [[ "${ENV_KV_MODE}" == "firewall" ]]; then
@@ -606,12 +791,18 @@ else
         fi
 
         KV_BYPASS="$(az keyvault show --name "${ENV_KV_NAME}" --resource-group "${ENV_KV_RG}" --query properties.networkAcls.bypass -o tsv 2>/dev/null || true)"
-        if [[ "${KV_BYPASS}" == "AzureServices" ]]; then
-          pass "Key Vault bypass is AzureServices (pragmatic mode)"
-        elif [[ "${ENV_KV_MODE}" == "public_allow" && -z "${KV_BYPASS}" ]]; then
-          pass "Key Vault bypass is not set because network ACL object is absent in public_allow mode"
+        if [[ "${ENV_KV_MODE}" == "firewall" ]]; then
+          if [[ "${KV_BYPASS}" == "None" ]]; then
+            pass "Key Vault bypass is None (firewall mode)"
+          else
+            fail "Key Vault bypass is '${KV_BYPASS}' (expected None in firewall mode)"
+          fi
+        elif [[ "${KV_BYPASS}" == "AzureServices" ]]; then
+          pass "Key Vault bypass is AzureServices (public_allow mode)"
+        elif [[ -z "${KV_BYPASS}" ]]; then
+          pass "Key Vault bypass is absent while still in public_allow mode"
         else
-          warn "Key Vault bypass is '${KV_BYPASS}' (expected AzureServices in current pragmatic mode)"
+          warn "Key Vault bypass is '${KV_BYPASS}' (expected AzureServices in public_allow mode)"
         fi
 
         KV_PE_COUNT="$(az keyvault show --name "${ENV_KV_NAME}" --resource-group "${ENV_KV_RG}" --query 'length(properties.privateEndpointConnections)' -o tsv 2>/dev/null || echo "0")"
@@ -638,6 +829,7 @@ else
     fi
 
     check_runner_infra_in_azure
+    check_runtime_network_in_azure
   else
     fail "Azure CLI is not authenticated (run: az login)"
   fi
