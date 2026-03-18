@@ -1,6 +1,6 @@
 # Terraform for Dev and Prod
 
-This directory contains a single Terraform stack used for both environments via tfvars and remote backend files.
+This directory contains the env-specific Terraform stack for `dev` and `prod`.
 
 ## Structure
 
@@ -14,47 +14,64 @@ terraform/
 +-- backend/
 |   +-- dev.hcl
 |   L-- prod.hcl
++-- shared-ops/
+|   +-- main.tf
+|   +-- variables.tf
+|   +-- outputs.tf
+|   +-- versions.tf
+|   +-- backend/
+|   |   L-- shared.hcl
+|   L-- vars/
+|       L-- shared.tfvars
 L-- vars/
     +-- dev.tfvars
     L-- prod.tfvars
 ```
 
-## What this stack manages
+## What the env stack manages
 
 - Resource Group
-- Azure Container Registry (ACR)
+- Runtime VNet
+- CAE infrastructure subnet
+- Runtime private-endpoints subnet
+- Dedicated Container Apps Environment
+- Log Analytics Workspace
+- Azure Container Registry
 - Azure Database for PostgreSQL Flexible Server (+ application database)
 - Azure Container App
-- Shared-or-dedicated Container Apps Environment (CAE)
 - Dedicated Key Vault per environment
 - Key Vault private endpoint + private DNS zone group
-- Shared runner infrastructure (VNet, subnets, NSG, Linux VM, private DNS zone + link)
+- Shared runner infrastructure (owned by `dev` state)
+- Runner/runtime VNet peering
 - Role assignments:
-  - `AcrPull` for Container App user-assigned identity
-  - `Key Vault Secrets User` for Container App user-assigned identity
+  - `AcrPull`
+  - `Key Vault Secrets User`
 
 ## Environment model
 
-- `dev` creates CAE, dedicated dev Key Vault, and shared runner infrastructure.
-- `prod` uses shared CAE, creates dedicated prod Key Vault, and reuses shared runner network assets from dev.
-- Both environments keep isolated Terraform state keys:
+- `dev` manages:
+  - dedicated CAE `taskapi-dev-cae-vnet-uks`
+  - runtime VNet `taskapi-dev-rt-vnet-uks`
+  - shared runner infrastructure
+- `prod` manages:
+  - dedicated CAE `taskapi-prod-cae-vnet-uks`
+  - runtime VNet `taskapi-prod-rt-vnet-uks`
+  - its own Key Vault + app/db resources
+  - reverse peering back to the shared runner VNet
+- State remains split:
   - `dev.terraform.tfstate`
   - `prod.terraform.tfstate`
 
-## Backend
+## Backends
 
-Backends are configured in:
+Env stack backends:
 
 - `backend/dev.hcl`
 - `backend/prod.hcl`
 
-Each command must run `terraform init` with the matching backend file.
+Shared-ops backend:
 
-## Required tools
-
-- Terraform `>= 1.6`
-- Azure CLI
-- GitHub OIDC or Azure CLI login with sufficient RBAC
+- `shared-ops/backend/shared.hcl`
 
 ## Local usage
 
@@ -64,7 +81,6 @@ Each command must run `terraform init` with the matching backend file.
 terraform -chdir=terraform init -backend-config=backend/dev.hcl -reconfigure
 terraform -chdir=terraform plan -var-file=vars/dev.tfvars -var="container_image_tag=sha-abc1234"
 terraform -chdir=terraform apply -var-file=vars/dev.tfvars -var="container_image_tag=sha-abc1234"
-terraform -chdir=terraform destroy -var-file=vars/dev.tfvars -auto-approve
 ```
 
 ### Prod
@@ -73,105 +89,65 @@ terraform -chdir=terraform destroy -var-file=vars/dev.tfvars -auto-approve
 terraform -chdir=terraform init -backend-config=backend/prod.hcl -reconfigure
 terraform -chdir=terraform plan -var-file=vars/prod.tfvars -var="container_image_tag=sha-abc1234"
 terraform -chdir=terraform apply -var-file=vars/prod.tfvars -var="container_image_tag=sha-abc1234"
-terraform -chdir=terraform destroy -var-file=vars/prod.tfvars -auto-approve
 ```
 
-## Runtime variables
+### Shared ops
 
-Important Terraform variables:
+```bash
+terraform -chdir=terraform/shared-ops init -backend-config=backend/shared.hcl -reconfigure
+terraform -chdir=terraform/shared-ops plan -var-file=vars/shared.tfvars
+terraform -chdir=terraform/shared-ops apply -var-file=vars/shared.tfvars
+```
 
-- `env`
-- `location`
-- `tags`
-- `container_image_tag`
-- `use_shared_cae`
-- `shared_cae_name`
-- `shared_cae_resource_group_name`
-- `use_shared_key_vault`
-- `key_vault_name`
-- `app_env_vars` (non-sensitive map)
+## Important variables
+
+- Common:
+  - `env`
+  - `location`
+  - `tags`
+  - `container_image_tag`
+- CAE / runtime network:
+  - `use_shared_cae`
+  - `container_app_environment_name`
+  - `runtime_virtual_network_name`
+  - `runtime_virtual_network_cidrs`
+  - `container_app_environment_infrastructure_subnet_name`
+  - `container_app_environment_infrastructure_subnet_cidrs`
+  - `runtime_private_endpoints_subnet_name`
+  - `runtime_private_endpoints_subnet_cidrs`
 - Key Vault network policy:
-  - `key_vault_network_mode` (`public_allow` currently, `firewall` after CAE VNet migration)
+  - `key_vault_network_mode`
   - `key_vault_private_endpoint_enabled`
-  - `key_vault_allowed_ip_cidrs` (used when mode is `firewall`)
-  - `key_vault_allowed_subnet_ids` (used when mode is `firewall`)
-- Shared runner platform:
+  - `key_vault_allowed_ip_cidrs`
+  - `key_vault_allowed_subnet_ids`
+- Shared runner:
   - `enable_shared_runner_platform`
   - `shared_runner_resource_group_name`
-  - `shared_runner_location` (runner/PE region override, for example `eastus`)
+  - `shared_runner_location`
   - `shared_runner_vnet_name`
   - `shared_runner_subnet_name`
   - `shared_runner_private_endpoints_subnet_name`
   - `shared_runner_private_dns_zone_name`
   - `shared_runner_admin_ssh_public_key`
   - `shared_runner_labels`
-- `rbac_propagation_wait_seconds` (delay before Container App revision update after role assignments)
-- PostgreSQL variables:
-  - `postgres_server_version`
-  - `postgres_sku_name`
-  - `postgres_storage_mb`
-  - `postgres_backup_retention_days`
-  - `postgres_public_network_access_enabled`
-  - `postgres_admin_username`
-  - `postgres_database_name`
 
-Terraform provisions PostgreSQL and configures Container App to read required `DB_*` values via Key Vault references.
+Steady-state target:
 
-Key Vault DB contract (per environment):
-
-- Manual required secret:
-  - `<env>-db-password` (example: `dev-db-password`)
-- Terraform-managed secrets:
-  - `<env>-db-host`
-  - `<env>-db-port`
-  - `<env>-db-user`
-  - `<env>-db-name`
+- `key_vault_network_mode = firewall`
+- Key Vault `bypass = None`
+- env-local Key Vault private endpoints
+- shared runner target location `uksouth`
 
 ## CI/CD integration
 
-- CI builds and pushes immutable image tags (`sha-<short_sha>`) to DEV ACR.
+- CI builds immutable image tags (`sha-<short_sha>`) to DEV ACR.
 - CD receives `image_tag` and runs Terraform `plan|apply|destroy`.
-- For PROD `plan/apply`, CD promotes the image from DEV ACR to PROD ACR by digest before Terraform.
-
-CD action semantics:
-
-- Use `plan` + `apply` for normal reconciliation.
-- `apply` creates missing managed resources, updates drift, and performs replacement when required.
-- `destroy` is a full environment reset for the selected Terraform state, not partial cleanup.
-- Resources created outside Terraform state are not removed by `apply`.
-
-## GitHub environment configuration
-
-Each GitHub environment (`dev`, `prod`) must define:
-
-### Variables
-
-- `AZURE_CLIENT_ID`
-- `AZURE_TENANT_ID`
-- `AZURE_SUBSCRIPTION_ID`
-- `ACR_NAME`
-- `ACR_LOGIN_SERVER`
-- `TF_APP_ENV_VARS_JSON` (optional JSON map, example: `{"NODE_ENV":"production"}`)
-- `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY` (required for runner VM create/update)
-
-### Secrets
-
-- No Terraform secret input is required.
-
-Additional requirement:
-
-- The deploy identity running Terraform (GitHub OIDC app/service principal) must have `Key Vault Secrets Officer` on the target env Key Vault scope.
-- Runtime identity (`<project>-<env>-ca-identity`) must have `Key Vault Secrets User` on the same env Key Vault scope.
-- If Key Vault is created for the first time in an environment, bootstrap in three steps:
-  1) create Key Vault,
-  2) add `<env>-db-password` (or, in temporary `firewall` mode, add/remove your `/32` allowlist around this step),
-  3) run full Terraform `plan/apply`.
+- PROD promotes the image from DEV ACR to PROD ACR by digest before Terraform.
+- Preflight is mandatory before `plan/apply`.
 
 ## Notes
 
-- `destroy` is available for both `dev` and `prod` in manual CD workflow.
-- Runtime-compatible default is `key_vault_network_mode = public_allow` (until CAE VNet migration).
-- If you temporarily switch to `firewall` mode for testing, add temporary KV firewall `/32` and pass the same value in `key_vault_allowed_ip_cidrs`.
-- For local `plan/apply`, always pass explicit `container_image_tag` (for example `sha-<short_sha>` from CI Push).
-- State keys and naming conventions are preserved to avoid accidental resource replacement.
-- Phase 2 hardening is active: dedicated env Key Vaults + self-hosted runner in VNet + private endpoint path.
+- For local runs, always pass explicit `container_image_tag`.
+- If initial bootstrap in `firewall` mode blocks local access, temporarily add your `/32` to `key_vault_allowed_ip_cidrs`, complete the step, then remove it.
+- Shared runner relocation must be executed from a trusted local shell or temporary GitHub-hosted break-glass path, not from the self-hosted runner VM being replaced.
+- Shared-ops currently codifies the budget and the schedule metadata; the Start/Stop VMs during off-hours deployment remains an operational follow-up described in `terraform/shared-ops/README.md`.

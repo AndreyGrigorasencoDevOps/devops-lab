@@ -39,8 +39,8 @@ Database + Key Vault model:
 - PostgreSQL server and app database are created by Terraform.
 - Container App reads all `DB_*` values from Key Vault references.
 - Dedicated Key Vault per environment (`taskapi-dev-kv-uks`, `taskapi-prod-kv-uks`).
-- Key Vault network mode is `public_allow` + private endpoint path for CD runner network.
-- Target hardened state after CAE VNet migration is `firewall`.
+- Key Vault network mode target is `firewall` with env-local private endpoints and runner/runtime private DNS resolution.
+- Dedicated CAE + runtime VNet now exist in repo config for both environments.
 - `DB_PASSWORD` is manual in env Key Vault as `<env>-db-password`.
 - Terraform writes/updates:
   - `<env>-db-host`
@@ -114,7 +114,8 @@ az role assignment list \
 2. Push to `main` produces image artifact in `ci-push.yml`.
 3. CD (`cd.yml`) runs preflight (`check-post-refactor-prereqs.sh`) before `plan/apply`.
 4. CD runs `plan` then `apply` for target environment.
-5. Validate `/health` and `/ready` on deployed app.
+5. Validate `/health` and `/ready` on the deployed app.
+6. For runner relocation or break-glass work, use a trusted local shell or temporary GitHub-hosted runner, not the self-hosted runner VM being replaced.
 
 Detailed steps:
 

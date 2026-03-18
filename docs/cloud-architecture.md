@@ -1,35 +1,19 @@
 # Cloud Architecture - Task API Platform (Azure)
 
-This document describes the current cloud architecture and near-term evolution path.
-
----
-
-## Table of Contents
-
-- [1. Overview](#1-overview)
-- [2. Subscription and Tenant Model](#2-subscription-and-tenant-model)
-- [3. Environments and Deployment Strategy](#3-environments-and-deployment-strategy)
-- [4. Naming Convention](#4-naming-convention)
-- [5. Current Architecture (March 2026)](#5-current-architecture-march-2026)
-- [6. Security Baseline](#6-security-baseline)
-- [7. Operations Baseline](#7-operations-baseline)
-- [8. Future Evolution](#8-future-evolution)
-
----
+This document describes the current repo target architecture and the rollout direction for Azure.
 
 ## 1. Overview
 
-The platform currently runs on Azure Container Apps and is managed by GitHub Actions + Terraform.
+The platform runs on Azure Container Apps and is managed by GitHub Actions plus Terraform.
 
-Current delivery model:
+Delivery model:
 
-- PR validation (`ci.yml`)
-- Push artifact build (`ci-push.yml`)
-- Manual CD (`cd.yml`) using Terraform plan/apply/destroy
+- PR validation: `ci.yml`
+- Push artifact build: `ci-push.yml`
+- Manual CD: `cd.yml`
+- Shared-ops budget layer: `terraform/shared-ops/`
 
----
-
-## 2. Subscription and Tenant Model
+## 2. Subscription and tenant model
 
 Use placeholders in docs and scripts. Do not commit environment-specific secret values.
 
@@ -39,13 +23,7 @@ Use placeholders in docs and scripts. Do not commit environment-specific secret 
 | Tenant ID | `<azure_tenant_id>` |
 | Region | `uksouth` |
 
-Security rule:
-
-- Never commit client secrets, passwords, tokens, or connection strings.
-
----
-
-## 3. Environments and Deployment Strategy
+## 3. Environments and deployment strategy
 
 | Environment | Trigger Source | Deployment Mode |
 | --- | --- | --- |
@@ -56,9 +34,7 @@ Key point:
 
 - Prod image is promoted from DEV ACR by digest before Terraform apply.
 
----
-
-## 4. Naming Convention
+## 4. Naming convention
 
 Primary pattern:
 
@@ -70,59 +46,61 @@ Examples:
 
 - `taskapi-dev-rg-uks`
 - `taskapi-prod-rg-uks`
-- `taskapi-dev-cae-uks`
-- `taskapi-dev-kv-uks`
-- `taskapi-prod-kv-uks`
+- `taskapi-dev-cae-vnet-uks`
+- `taskapi-prod-cae-vnet-uks`
+- `taskapi-dev-rt-vnet-uks`
 - `taskapi-shared-runner-vnet-uks`
 
-Notes:
-
-- ACR names must be globally unique and lowercase.
-- Key Vault names are globally unique and must follow Azure naming rules.
-
----
-
-## 5. Current Architecture (March 2026)
+## 5. Repo target architecture (March 2026)
 
 ```text
 GitHub Actions (manual CD)
             |
             v
-Self-hosted Runner (VNet, private DNS)
+Self-hosted Runner (shared VNet, private DNS)
             |
             v
 Terraform + Azure API
             |
             +--> Azure Container Registry (DEV/PROD)
-            +--> Azure Container Apps (dev/prod runtime)
-            +--> Azure Key Vault (dedicated per env + private endpoint)
+            +--> Azure Container Apps (dedicated CAE per env)
+            +--> Azure Key Vault (dedicated per env + env-local private endpoint)
+            +--> Shared Ops (subscription budget + runner schedule metadata)
 ```
 
-Managed by Terraform:
+Managed by the env stack:
 
 - Resource Group
+- Runtime VNet + CAE infrastructure subnet + env PE subnet
 - Log Analytics Workspace
-- Container Apps Environment (shared or dedicated)
+- Dedicated Container Apps Environment
 - Azure Container Registry
 - Azure Database for PostgreSQL Flexible Server (+ app database)
 - Azure Container App
 - Key Vault (dedicated per environment)
 - Key Vault private endpoint + private DNS zone group
-- Shared runner VNet + runner/PE subnets + NSG + Linux VM runner
-- Shared runner location override (`eastus` currently; planned return to `uksouth`)
-- Shared private DNS zone `privatelink.vaultcore.azure.net` + VNet link
+- Shared runner infrastructure (VNet, runner subnet, PE subnet, NSG, Linux VM)
+- Shared private DNS zone `privatelink.vaultcore.azure.net`
+- Runner/runtime VNet peering
 - RBAC assignments (`AcrPull`, `Key Vault Secrets User`)
 
----
+Managed by the shared-ops stack:
 
-## 6. Security Baseline
+- shared ops resource group
+- subscription budget
+- runner office-hours / patch / right-sizing metadata
 
-- GitHub -> Azure auth via OIDC (no long-lived cloud credentials in repo).
-- Runtime access via Managed Identity.
-- Current runtime compatibility mode: Key Vault `key_vault_network_mode = public_allow` with `bypass = AzureServices` (temporary).
-- Target hardened mode after CAE VNet migration: Key Vault `firewall` with `default_action = Deny`.
-- Key Vault private endpoint access path from runner network is already active.
-- Principle of least privilege enforced through RBAC assignments.
+## 6. Security baseline
+
+- GitHub -> Azure auth via OIDC
+- Runtime access via Managed Identity
+- Dedicated CAE and runtime VNet per environment
+- Key Vault steady-state target:
+  - `key_vault_network_mode = firewall`
+  - `default_action = Deny`
+  - `bypass = None`
+- Key Vault private endpoint access path from both runtime and runner networks
+- Least-privilege RBAC through env-scoped role assignments
 
 Database secret contract:
 
@@ -134,32 +112,28 @@ Database secret contract:
 
 Ownership:
 
-- `<env>-db-password` is manually managed in Key Vault.
-- `<env>-db-host`, `<env>-db-port`, `<env>-db-user`, `<env>-db-name` are written by Terraform to Key Vault.
+- `<env>-db-password` is manually managed in Key Vault
+- `<env>-db-host`, `<env>-db-port`, `<env>-db-user`, `<env>-db-name` are written by Terraform
 
----
-
-## 7. Operations Baseline
+## 7. Operations baseline
 
 - Health endpoints:
-  - `GET /health` (liveness)
-  - `GET /ready` (readiness)
-- CI/CD runbooks:
+  - `GET /health`
+  - `GET /ready`
+- Runbooks:
   - `docs/post-refactor-runbook.md`
+  - `docs/security-operations.md`
+- Preflight:
   - `scripts/check-post-refactor-prereqs.sh`
-- CD preflight gate validates Key Vault/RBAC/runner prerequisites before `plan/apply`.
-- Terraform operation guide:
+- Terraform guides:
   - `terraform/README.md`
+  - `terraform/shared-ops/README.md`
 
----
-
-## 8. Future Evolution
+## 8. Future evolution
 
 Planned next evolution layers:
 
-- Multi-service architecture (Node + Python service)
-- Kubernetes runtime track (AKS) as a future stage
-- Expanded observability (dashboards, alerts, incident drills)
-- Stronger policy guardrails for prod change management
-
-AKS is a future target, not the current production runtime for this repository.
+- expanded observability and alerts
+- incident drills and recovery evidence
+- stronger prod guardrails
+- future AKS exploration only if the runtime model changes materially

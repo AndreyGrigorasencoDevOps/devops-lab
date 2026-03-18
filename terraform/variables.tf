@@ -53,6 +53,52 @@ variable "shared_cae_resource_group_name" {
   }
 }
 
+variable "container_app_environment_name" {
+  type        = string
+  description = "Override name for the dedicated Container Apps Environment when use_shared_cae is false."
+  default     = null
+  nullable    = true
+}
+
+variable "runtime_virtual_network_name" {
+  type        = string
+  description = "Override name for the env-local runtime VNet that hosts CAE infrastructure and env private endpoints."
+  default     = null
+  nullable    = true
+}
+
+variable "runtime_virtual_network_cidrs" {
+  type        = list(string)
+  description = "Address spaces for the env-local runtime VNet."
+  default     = ["10.43.0.0/16"]
+}
+
+variable "container_app_environment_infrastructure_subnet_name" {
+  type        = string
+  description = "Override name for the subnet used by the dedicated Container Apps Environment."
+  default     = null
+  nullable    = true
+}
+
+variable "container_app_environment_infrastructure_subnet_cidrs" {
+  type        = list(string)
+  description = "Address prefixes for the Container Apps Environment infrastructure subnet."
+  default     = ["10.43.0.0/23"]
+}
+
+variable "runtime_private_endpoints_subnet_name" {
+  type        = string
+  description = "Override name for the env-local private endpoints subnet."
+  default     = null
+  nullable    = true
+}
+
+variable "runtime_private_endpoints_subnet_cidrs" {
+  type        = list(string)
+  description = "Address prefixes for the env-local private endpoints subnet."
+  default     = ["10.43.10.0/24"]
+}
+
 variable "use_shared_key_vault" {
   type        = bool
   description = "If true, use an existing shared Key Vault."
@@ -179,7 +225,7 @@ variable "shared_runner_vm_name" {
 variable "shared_runner_vm_size" {
   type        = string
   description = "Size of self-hosted runner VM."
-  default     = "Standard_B2s"
+  default     = "Standard_B1s"
 }
 
 variable "shared_runner_admin_username" {
@@ -289,7 +335,7 @@ variable "key_vault_allowed_subnet_ids" {
 
 variable "key_vault_network_mode" {
   type        = string
-  description = "Key Vault network mode: public_allow (Phase 1) or firewall (Phase 2 hardening)."
+  description = "Key Vault network mode: public_allow (transitional runtime compatibility) or firewall (steady-state Deny/None posture)."
   default     = "public_allow"
   validation {
     condition     = contains(["public_allow", "firewall"], var.key_vault_network_mode)

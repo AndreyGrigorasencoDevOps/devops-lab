@@ -28,6 +28,26 @@ output "container_app_environment_id" {
   value       = local.container_app_environment_id
 }
 
+output "container_app_environment_name" {
+  description = "Container App Environment name in use."
+  value       = var.use_shared_cae ? data.azurerm_container_app_environment.shared[0].name : azurerm_container_app_environment.main[0].name
+}
+
+output "runtime_virtual_network_name" {
+  description = "Env-local runtime VNet name when a dedicated CAE is managed by this stack."
+  value       = try(azurerm_virtual_network.runtime[0].name, null)
+}
+
+output "container_app_environment_infrastructure_subnet_id" {
+  description = "Subnet id used by the dedicated Container Apps Environment."
+  value       = try(azurerm_subnet.container_app_environment_infrastructure[0].id, null)
+}
+
+output "runtime_private_endpoints_subnet_id" {
+  description = "Env-local private endpoints subnet id."
+  value       = try(azurerm_subnet.runtime_private_endpoints[0].id, null)
+}
+
 output "key_vault_name" {
   description = "Key Vault name in use."
   value       = local.key_vault_name
@@ -81,8 +101,10 @@ output "shared_runner_vnet_name" {
 }
 
 output "shared_runner_private_endpoints_subnet_id" {
-  description = "Subnet id used for Key Vault private endpoints."
-  value       = local.shared_runner_private_endpoint_subnet_id
+  description = "Shared runner private endpoints subnet id when the shared runner platform is managed or referenced."
+  value = var.enable_shared_runner_platform ? azurerm_subnet.shared_runner_private_endpoints[0].id : (
+    try(data.azurerm_subnet.shared_runner_private_endpoints[0].id, null)
+  )
 }
 
 output "shared_runner_private_dns_zone_name" {

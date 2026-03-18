@@ -23,18 +23,43 @@ locals {
     var.tags
   )
 
-  container_app_environment_id      = var.use_shared_cae ? data.azurerm_container_app_environment.shared[0].id : azurerm_container_app_environment.main[0].id
-  key_vault_id                      = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].id : azurerm_key_vault.main[0].id
-  key_vault_name                    = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].name : azurerm_key_vault.main[0].name
-  key_vault_firewall_enabled        = var.key_vault_network_mode == "firewall"
-  shared_runner_resource_group_name = var.enable_shared_runner_platform ? azurerm_resource_group.main.name : var.shared_runner_resource_group_name
-  shared_runner_location_effective  = coalesce(var.shared_runner_location, azurerm_resource_group.main.location)
-  shared_runner_private_endpoint_subnet_id = var.key_vault_private_endpoint_enabled ? (
-    var.enable_shared_runner_platform ? azurerm_subnet.shared_runner_private_endpoints[0].id : data.azurerm_subnet.shared_runner_private_endpoints[0].id
+  runtime_network_enabled = !var.use_shared_cae
+  container_app_environment_name = coalesce(
+    var.container_app_environment_name,
+    "${var.project}-${var.env}-cae-uks"
+  )
+  runtime_virtual_network_name = coalesce(
+    var.runtime_virtual_network_name,
+    "${var.project}-${var.env}-rt-vnet-uks"
+  )
+  container_app_environment_infrastructure_subnet_name = coalesce(
+    var.container_app_environment_infrastructure_subnet_name,
+    "${var.project}-${var.env}-cae-snet"
+  )
+  runtime_private_endpoints_subnet_name = coalesce(
+    var.runtime_private_endpoints_subnet_name,
+    "${var.project}-${var.env}-pe-snet"
+  )
+
+  container_app_environment_id = var.use_shared_cae ? data.azurerm_container_app_environment.shared[0].id : azurerm_container_app_environment.main[0].id
+  key_vault_id                 = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].id : azurerm_key_vault.main[0].id
+  key_vault_name               = var.use_shared_key_vault ? data.azurerm_key_vault.shared[0].name : azurerm_key_vault.main[0].name
+  key_vault_firewall_enabled   = var.key_vault_network_mode == "firewall"
+  key_vault_network_bypass     = local.key_vault_firewall_enabled ? "None" : "AzureServices"
+
+  shared_runner_resource_group_name             = var.enable_shared_runner_platform ? azurerm_resource_group.main.name : var.shared_runner_resource_group_name
+  shared_runner_location_effective              = coalesce(var.shared_runner_location, azurerm_resource_group.main.location)
+  shared_runner_vnet_id                         = var.enable_shared_runner_platform ? azurerm_virtual_network.shared_runner[0].id : data.azurerm_virtual_network.shared_runner[0].id
+  shared_runner_vnet_name_effective             = var.enable_shared_runner_platform ? azurerm_virtual_network.shared_runner[0].name : data.azurerm_virtual_network.shared_runner[0].name
+  shared_runner_private_dns_zone_id             = var.enable_shared_runner_platform ? azurerm_private_dns_zone.shared_runner_key_vault[0].id : data.azurerm_private_dns_zone.shared_runner_key_vault[0].id
+  shared_runner_private_dns_zone_name_effective = var.enable_shared_runner_platform ? azurerm_private_dns_zone.shared_runner_key_vault[0].name : data.azurerm_private_dns_zone.shared_runner_key_vault[0].name
+
+  key_vault_private_endpoint_subnet_id = var.key_vault_private_endpoint_enabled ? (
+    local.runtime_network_enabled ? azurerm_subnet.runtime_private_endpoints[0].id : (
+      var.enable_shared_runner_platform ? azurerm_subnet.shared_runner_private_endpoints[0].id : data.azurerm_subnet.shared_runner_private_endpoints[0].id
+    )
   ) : null
-  shared_runner_private_dns_zone_id = var.key_vault_private_endpoint_enabled ? (
-    var.enable_shared_runner_platform ? azurerm_private_dns_zone.shared_runner_key_vault[0].id : data.azurerm_private_dns_zone.shared_runner_key_vault[0].id
-  ) : null
+
   shared_runner_bootstrap_script = <<-EOT
     #!/usr/bin/env bash
     set -euo pipefail
@@ -42,6 +67,15 @@ locals {
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y ca-certificates curl gnupg lsb-release jq unzip
+
+    # A small swap file keeps the budget B1s runner usable during az/terraform bursts.
+    if ! swapon --show | grep -q .; then
+      fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+      chmod 600 /swapfile
+      mkswap /swapfile
+      swapon /swapfile
+      grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
 
     curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
@@ -85,7 +119,8 @@ locals {
     EOS
     chmod +x /usr/local/bin/register-gh-runner.sh
   EOT
-  reserved_app_env_var_names     = local.db_env_var_names
+
+  reserved_app_env_var_names = local.db_env_var_names
   db_secret_id_by_env_var = merge(
     { for env_var_name, secret in azurerm_key_vault_secret.db_runtime : env_var_name => secret.versionless_id },
     { DB_PASSWORD = data.azurerm_key_vault_secret.db_password.versionless_id }
@@ -235,22 +270,84 @@ resource "azurerm_private_dns_zone_virtual_network_link" "shared_runner_key_vaul
 }
 
 data "azurerm_virtual_network" "shared_runner" {
-  count               = var.enable_shared_runner_platform || !var.key_vault_private_endpoint_enabled ? 0 : 1
+  count               = var.enable_shared_runner_platform ? 0 : 1
   name                = var.shared_runner_vnet_name
   resource_group_name = local.shared_runner_resource_group_name
 }
 
 data "azurerm_subnet" "shared_runner_private_endpoints" {
-  count                = var.enable_shared_runner_platform || !var.key_vault_private_endpoint_enabled ? 0 : 1
+  count                = var.enable_shared_runner_platform || local.runtime_network_enabled || !var.key_vault_private_endpoint_enabled ? 0 : 1
   name                 = var.shared_runner_private_endpoints_subnet_name
   virtual_network_name = data.azurerm_virtual_network.shared_runner[0].name
   resource_group_name  = local.shared_runner_resource_group_name
 }
 
 data "azurerm_private_dns_zone" "shared_runner_key_vault" {
-  count               = var.enable_shared_runner_platform || !var.key_vault_private_endpoint_enabled ? 0 : 1
+  count               = var.enable_shared_runner_platform ? 0 : 1
   name                = var.shared_runner_private_dns_zone_name
   resource_group_name = local.shared_runner_resource_group_name
+}
+
+resource "azurerm_virtual_network" "runtime" {
+  count               = local.runtime_network_enabled ? 1 : 0
+  name                = local.runtime_virtual_network_name
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  address_space       = var.runtime_virtual_network_cidrs
+  tags                = local.tags
+}
+
+resource "azurerm_subnet" "container_app_environment_infrastructure" {
+  count                = local.runtime_network_enabled ? 1 : 0
+  name                 = local.container_app_environment_infrastructure_subnet_name
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.runtime[0].name
+  address_prefixes     = var.container_app_environment_infrastructure_subnet_cidrs
+
+  lifecycle {
+    replace_triggered_by = [azurerm_virtual_network.runtime[0]]
+  }
+}
+
+resource "azurerm_subnet" "runtime_private_endpoints" {
+  count                             = local.runtime_network_enabled ? 1 : 0
+  name                              = local.runtime_private_endpoints_subnet_name
+  resource_group_name               = azurerm_resource_group.main.name
+  virtual_network_name              = azurerm_virtual_network.runtime[0].name
+  address_prefixes                  = var.runtime_private_endpoints_subnet_cidrs
+  private_endpoint_network_policies = "Disabled"
+
+  lifecycle {
+    replace_triggered_by = [azurerm_virtual_network.runtime[0]]
+  }
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "runtime_key_vault" {
+  count                 = local.runtime_network_enabled ? 1 : 0
+  name                  = "${var.project}-${var.env}-runtime-kv-dns-link"
+  resource_group_name   = local.shared_runner_resource_group_name
+  private_dns_zone_name = local.shared_runner_private_dns_zone_name_effective
+  virtual_network_id    = azurerm_virtual_network.runtime[0].id
+  registration_enabled  = false
+  tags                  = local.tags
+}
+
+resource "azurerm_virtual_network_peering" "runtime_to_runner" {
+  count                        = local.runtime_network_enabled ? 1 : 0
+  name                         = "${var.project}-${var.env}-runtime-to-runner"
+  resource_group_name          = azurerm_resource_group.main.name
+  virtual_network_name         = azurerm_virtual_network.runtime[0].name
+  remote_virtual_network_id    = local.shared_runner_vnet_id
+  allow_virtual_network_access = true
+}
+
+resource "azurerm_virtual_network_peering" "runner_to_runtime" {
+  count                        = local.runtime_network_enabled ? 1 : 0
+  name                         = "${var.project}-${var.env}-runner-to-runtime"
+  resource_group_name          = local.shared_runner_resource_group_name
+  virtual_network_name         = local.shared_runner_vnet_name_effective
+  remote_virtual_network_id    = azurerm_virtual_network.runtime[0].id
+  allow_virtual_network_access = true
 }
 
 resource "azurerm_log_analytics_workspace" "main" {
@@ -265,10 +362,11 @@ resource "azurerm_log_analytics_workspace" "main" {
 
 resource "azurerm_container_app_environment" "main" {
   count                      = var.use_shared_cae ? 0 : 1
-  name                       = "${var.project}-${var.env}-cae-uks"
+  name                       = local.container_app_environment_name
   location                   = azurerm_resource_group.main.location
   resource_group_name        = azurerm_resource_group.main.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main[0].id
+  infrastructure_subnet_id   = azurerm_subnet.container_app_environment_infrastructure[0].id
   tags                       = local.tags
 }
 
@@ -292,7 +390,7 @@ resource "azurerm_key_vault" "main" {
   tags                          = local.tags
 
   network_acls {
-    bypass                     = "AzureServices"
+    bypass                     = local.key_vault_network_bypass
     default_action             = local.key_vault_firewall_enabled ? "Deny" : "Allow"
     ip_rules                   = local.key_vault_firewall_enabled ? var.key_vault_allowed_ip_cidrs : []
     virtual_network_subnet_ids = local.key_vault_firewall_enabled ? var.key_vault_allowed_subnet_ids : []
@@ -308,9 +406,9 @@ data "azurerm_key_vault" "shared" {
 resource "azurerm_private_endpoint" "key_vault" {
   count               = var.key_vault_private_endpoint_enabled ? 1 : 0
   name                = "${var.project}-${var.env}-kv-pe-uks"
-  location            = local.shared_runner_location_effective
+  location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
-  subnet_id           = local.shared_runner_private_endpoint_subnet_id
+  subnet_id           = local.key_vault_private_endpoint_subnet_id
   tags                = local.tags
 
   private_service_connection {
@@ -366,7 +464,6 @@ resource "azurerm_postgresql_flexible_server" "main" {
   public_network_access_enabled = var.postgres_public_network_access_enabled
   tags                          = local.tags
 
-  # Existing servers may have an auto-selected zone; Azure doesn't allow arbitrary zone updates in-place.
   lifecycle {
     ignore_changes = [zone]
   }
@@ -406,7 +503,10 @@ resource "azurerm_container_app" "main" {
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
   depends_on = [
-    terraform_data.rbac_propagation
+    azurerm_private_dns_zone_virtual_network_link.runtime_key_vault,
+    azurerm_virtual_network_peering.runtime_to_runner,
+    azurerm_virtual_network_peering.runner_to_runtime,
+    terraform_data.rbac_propagation,
   ]
 
   identity {

@@ -18,7 +18,8 @@ Node.js (Express) Task API used as a DevOps learning project.
 - Terraform uses one shared root stack (`terraform/`) with:
   - env-specific backend files (`backend/dev.hcl`, `backend/prod.hcl`)
   - env-specific tfvars (`vars/dev.tfvars`, `vars/prod.tfvars`)
-- Stage 9 Phase 2 hardening is active: dedicated env Key Vaults + private endpoints + preflight gate.
+  - a shared-ops sub-root (`terraform/shared-ops/`) for budget + runner schedule metadata
+- Paid-normalization repo target is active: dedicated CAE per env, runtime VNets, Key Vault firewall mode, and shared-ops metadata.
 - Prod deployment promotes image by digest from DEV ACR to PROD ACR before Terraform apply.
 
 ## Documentation Map
@@ -30,6 +31,7 @@ Node.js (Express) Task API used as a DevOps learning project.
 - Legacy archive note: [docs/archive/terraform-environments-legacy.md](./docs/archive/terraform-environments-legacy.md)
 - Security operations: [docs/security-operations.md](./docs/security-operations.md)
 - Terraform usage: [terraform/README.md](./terraform/README.md)
+- Shared ops Terraform: [terraform/shared-ops/README.md](./terraform/shared-ops/README.md)
 - Cloud architecture: [docs/cloud-architecture.md](./docs/cloud-architecture.md)
 
 ## Stack
@@ -102,6 +104,15 @@ See [docs/local-development.md](./docs/local-development.md) for the full macOS 
 |   +-- backend/
 |   |   +-- dev.hcl
 |   |   L-- prod.hcl
+|   +-- shared-ops/
+|   |   +-- main.tf
+|   |   +-- variables.tf
+|   |   +-- outputs.tf
+|   |   +-- versions.tf
+|   |   +-- backend/
+|   |   |   L-- shared.hcl
+|   |   L-- vars/
+|   |       L-- shared.tfvars
 |   L-- vars/
 |       +-- dev.tfvars
 |       L-- prod.tfvars

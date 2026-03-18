@@ -206,17 +206,17 @@ Objective: move from baseline security to production-grade identity model.
 - [x] Secret rotation runbook and ownership model
 - [x] Access review cadence for CI/runtime/human identities
 - [x] Add stronger policy checks (least privilege verification)
-- [x] Phase 2 operating mode is active with pragmatic runtime compatibility (`key_vault_network_mode = public_allow` until CAE VNet migration)
+- [x] Phase 2 operating mode was active with pragmatic runtime compatibility (`key_vault_network_mode = public_allow` before paid normalization)
 - [x] Phase 2 operational status in `dev` (strict preflight + runner online + successful apply)
 - [x] Phase 2 operational status in `prod` (strict preflight + successful CD `plan` -> `apply`)
-- [ ] Phase 3 shared CAE VNet migration (keep shared CAE model) and return runtime mode to `firewall`
+- [ ] Phase 3 paid normalization rollout (dedicated CAE per env + runtime VNet + `firewall` mode)
 
-Current temporary operating constraints (free-tier period):
+Current rollout status (repo target state, Azure convergence pending):
 
-- Shared CAE model (`prod` uses shared CAE from `dev`). Why: free-tier/subscription limits. Risk: cross-env coupling and weaker isolation. Exit: dedicated CAE becomes operational for each environment.
-- `key_vault_network_mode = public_allow` + `bypass = AzureServices`. Why: runtime compatibility before CAE VNet integration. Risk: runtime path is not yet fully hardened. Exit: CAE VNet migration completes and both environments return to `firewall`.
-- Shared runner platform in `eastus` while app/runtime stay in `uksouth`. Why: `uksouth` SKU/capacity restrictions. Risk: extra control-plane latency and split-region operations. Exit: runner platform is relocated and stable in `uksouth`.
-- Trivy targeted exception for `AZU-0013` / `AVD-AZU-0013`. Why: CI must stay blocking while `public_allow` is intentionally active. Risk: normalization debt if the ignore stays too long. Exit: remove `.trivyignore` entries immediately after Key Vault returns to `firewall` / `Deny`.
+- Terraform now targets dedicated CAEs for both `dev` and `prod` with env-local runtime VNets and env-local Key Vault private endpoints.
+- Terraform tfvars now target `key_vault_network_mode = firewall` with `bypass = None`; Azure must still be converged in the rollout order from the runbook.
+- Shared runner location now targets `uksouth`; relocate the runner from a trusted local shell or temporary break-glass runner, not from the VM being replaced.
+- The temporary Trivy exception has been removed from repo config; Trivy should stay blocking once Azure is converged to the new Key Vault posture.
 
 Post-paid normalization track:
 
