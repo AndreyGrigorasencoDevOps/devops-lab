@@ -123,8 +123,6 @@ jobs:
 
       - name: Trivy config scan
         uses: aquasecurity/trivy-action@0.26.0
-        env:
-          TRIVY_IGNOREFILE: .trivyignore
         with:
           version: latest
           scan-type: config
