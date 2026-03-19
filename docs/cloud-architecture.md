@@ -91,9 +91,7 @@ Managed by the env stack:
 
 Managed by the shared-ops stack:
 
-- shared ops resource group
 - subscription budget
-- runner schedule / patch / right-sizing metadata
 
 ## 6. Security baseline
 
@@ -127,8 +125,6 @@ Ownership:
   - `GET /ready`
 - CD boots the shared runner on demand and deallocates it after every run.
 - Runbooks:
-  - `docs/current-rollout-runbook.md`
-  - `docs/post-refactor-runbook.md`
   - `docs/security-operations.md`
 - Preflight:
   - `scripts/check-post-refactor-prereqs.sh`

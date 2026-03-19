@@ -1,43 +1,36 @@
 # Shared Ops Terraform
 
-This Terraform root manages shared, subscription-scoped cost-control artifacts that do not belong to the env-specific `dev` or `prod` states.
+This Terraform root now manages one shared, subscription-scoped control only:
+
+- the monthly Azure subscription budget
 
 ## Why this exists
 
-Before paid normalization, most operational concerns lived alongside the env stacks because the repo only needed `dev` and `prod` runtime state.
+The env root under `terraform/` owns runtime infrastructure such as the app, DB, Key Vault, CAE, runtime VNet, and the shared runner VM.
 
-Now there is a small set of shared operational controls that are not environment-specific:
-
-- subscription budget
-- budget alert contacts
-- runner office-hours metadata
-- runner patch/right-sizing metadata
-
-Keeping those controls in `terraform/shared-ops/` gives them a separate Terraform state and avoids coupling subscription-wide operations to the `dev` or `prod` runtime plans.
+`terraform/shared-ops/` exists so the subscription budget can live in its own Terraform state instead of being awkwardly owned by `dev` or `prod`.
 
 ## What it manages
 
-- Shared ops resource group (`taskapi-shared-ops-rg-uks` by default)
 - Monthly Azure subscription budget with alerts at `50%`, `75%`, `90%`, and `100%`
-- Runner office-hours metadata stored in Terraform variables/outputs and mirrored into RG tags
-- Runner patch/right-sizing metadata used by the runbooks
 
-## What is different from the older env files
+## What it does not manage
 
-- `terraform/` remains the env infrastructure root for app/runtime resources.
-- `terraform/shared-ops/` is not another environment; it is a separate root for shared subscription-scope operations.
-- The older env files create or reference the runner VM, networks, CAEs, Key Vaults, and app stack.
-- The shared-ops files do not manage the app stack or the runner VM itself; they manage cost-control and operational metadata around that stack.
-
-## What it does not yet automate
-
-- Optional office-hours Start/Stop VMs deployment itself
+- Shared runner VM scheduling
+- Azure Start/Stop automation
 - Weekly patch execution on the runner VM
 - Azure Advisor review workflow
 
-Those steps remain operational, but the metadata in `vars/shared.tfvars` is now the source of truth the runbook should follow. Primary CD cost control now comes from workflow-driven VM deallocation after each run, not from a separate Azure schedule.
+Primary runner cost control now comes from workflow-driven VM deallocation after each CD run, not from a separate Azure schedule.
 
 ## Usage
+
+Before the first apply:
+
+1. Delete the old manual budget `taskapi-dev-budget`.
+2. Replace `replace-before-apply@example.com` in `vars/shared.tfvars` with real alert recipients.
+
+Then run:
 
 ```bash
 terraform -chdir=terraform/shared-ops init -backend-config=backend/shared.hcl -reconfigure
@@ -45,9 +38,9 @@ terraform -chdir=terraform/shared-ops plan -var-file=vars/shared.tfvars
 terraform -chdir=terraform/shared-ops apply -var-file=vars/shared.tfvars
 ```
 
-## Follow-up after apply
+## Notes
 
-1. Use the CD workflow's hosted boot/deallocate flow as the primary cost-control path for normal deployments.
-2. Optionally deploy Azure Start/Stop VMs during off-hours using the runner schedule values from `vars/shared.tfvars` if you want an extra office-hours guardrail outside CD.
-3. Record patch evidence every Wednesday at `runner_patch_time` in the timezone from `runner_schedule_timezone`.
-4. Record monthly Azure Advisor right-sizing review evidence.
+- The Terraform-managed budget is named `taskapi-shared-monthly-budget`.
+- The configured monthly amount is `15` in the subscription billing currency.
+- The budget starts on `2026-04-01T00:00:00Z` because Azure monthly budgets must begin on the first day of a month.
+- Budget alerts are informational only; they do not stop resources automatically.

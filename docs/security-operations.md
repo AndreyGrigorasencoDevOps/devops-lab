@@ -64,29 +64,24 @@ The gate now verifies:
 
 ## 4.1) Trivy policy
 
-- Temporary exception `AZU-0013` / `AVD-AZU-0013` remains approved only for the rollout window.
-- Remove it immediately after both environments are confirmed on Key Vault `firewall` mode and Trivy stays green without the exception.
-- Expected steady-state: repo and Azure both converge to Key Vault `default_action = Deny` and `bypass = None`.
-- If Azure is temporarily behind repo state during rollout, do not reintroduce a long-lived ignore; use the documented rollout order and converge the infra instead.
+- No temporary exception for `AZU-0013` / `AVD-AZU-0013` should remain in steady state.
+- Expected posture: repo and Azure both converge to Key Vault `default_action = Deny` and `bypass = None`.
+- If this policy fails again, fix the infrastructure drift or Terraform intent instead of reintroducing a long-lived ignore.
 
 ## 5) Runner ops cadence
 
 - Primary cost-control path:
   - CD boots the shared runner only when needed and deallocates it after each run
   - deallocation stops VM compute charges, but OS disk charges continue
-- Office-hours target:
-  - Mon-Fri `07:00` start / `23:00` stop in `Europe/Paris`
 - Patch cadence:
-  - weekly Wednesday `22:00` `Europe/Paris`
+  - weekly Wednesday `22:00` local ops window
 - Right-sizing review:
   - monthly, using Azure Advisor plus runner utilization
 
 Source of truth:
 
-- `terraform/shared-ops/vars/shared.tfvars`
-- `terraform/shared-ops/README.md`
-
-Office-hours metadata is now optional secondary automation rather than the primary CD cost-control mechanism.
+- this runbook
+- `docs/ROADMAP.md`
 
 ## 6) Break-glass posture
 

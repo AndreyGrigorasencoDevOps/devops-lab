@@ -4,7 +4,7 @@ This file is historical context from the earlier free-tier / Phase 2 rollout.
 
 Do not use this as the main next-step guide for the current paid-normalization rollout.
 
-Use `docs/current-rollout-runbook.md` instead.
+Use `docs/ROADMAP.md` for current platform milestones and `docs/security-operations.md` for ongoing operations.
 
 This checklist is the practical execution guide after local code changes.
 

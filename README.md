@@ -5,7 +5,7 @@ Node.js (Express) Task API used as a DevOps learning project.
 ## Start Here
 
 - Main learning path: [Roadmap](./docs/ROADMAP.md)
-- Current operational checklist: [Current rollout runbook](./docs/current-rollout-runbook.md)
+- Current operational baseline: [Security operations](./docs/security-operations.md)
 
 ## Current Platform Snapshot (as of March 2026)
 
@@ -18,16 +18,16 @@ Node.js (Express) Task API used as a DevOps learning project.
 - Terraform uses one shared root stack (`terraform/`) with:
   - env-specific backend files (`backend/dev.hcl`, `backend/prod.hcl`)
   - env-specific tfvars (`vars/dev.tfvars`, `vars/prod.tfvars`)
-  - a shared-ops sub-root (`terraform/shared-ops/`) for budget + runner schedule metadata
-- Paid-normalization repo target is active: dedicated CAE per env, runtime VNets, Key Vault firewall mode, and shared-ops metadata.
+  - a shared-ops sub-root (`terraform/shared-ops/`) for the subscription budget
+- Paid-normalization repo target is active: dedicated CAE per env, runtime VNets, Key Vault firewall mode, and a Terraform-managed subscription budget.
 - Prod deployment promotes image by digest from DEV ACR to PROD ACR before Terraform apply.
 
 ## Documentation Map
 
 - Learning roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md)
 - Local development: [docs/local-development.md](./docs/local-development.md)
-- Current rollout checklist: [docs/current-rollout-runbook.md](./docs/current-rollout-runbook.md)
-- Post-refactor reference: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)
+- Archived paid-normalization rollout: [docs/current-rollout-runbook.md](./docs/current-rollout-runbook.md)
+- Archived post-refactor reference: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)
 - Archived Phase 2 cutover: [docs/phase2-cutover-next-steps.md](./docs/phase2-cutover-next-steps.md)
 - Legacy archive note: [docs/archive/terraform-environments-legacy.md](./docs/archive/terraform-environments-legacy.md)
 - Security operations: [docs/security-operations.md](./docs/security-operations.md)

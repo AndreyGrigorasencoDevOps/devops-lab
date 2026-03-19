@@ -150,4 +150,4 @@ Steady-state target:
 - For local runs, always pass explicit `container_image_tag`.
 - If initial bootstrap in `firewall` mode blocks local access, temporarily add your `/32` to `key_vault_allowed_ip_cidrs`, complete the step, then remove it.
 - Shared runner relocation must be executed from a trusted local shell or temporary GitHub-hosted break-glass path, not from the self-hosted runner VM being replaced.
-- Shared-ops currently codifies the budget and the schedule metadata; the Start/Stop VMs during off-hours deployment remains an operational follow-up described in `terraform/shared-ops/README.md`.
+- Shared-ops now codifies only the subscription budget; runner scheduling is handled by the CD workflow boot/deallocate flow instead of a separate Terraform layer.
