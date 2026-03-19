@@ -193,6 +193,12 @@ terraform -chdir=terraform plan -var-file=vars/dev.tfvars -var="container_image_
 - Secret: `SONAR_TOKEN`
 - Variables: `SONAR_PROJECT`, `SONAR_ORG`
 
+### Repository-level GitHub Actions secrets
+
+- `GH_RUNNER_ADMIN_TOKEN`
+  - Required for CD to query repository self-hosted runners while booting the shared Azure runner VM.
+  - Use a fine-grained PAT or GitHub App token with repository `Administration: Read`.
+
 ### GitHub environment variables (`dev` and `prod`)
 
 - `AZURE_CLIENT_ID`

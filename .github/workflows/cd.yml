@@ -246,16 +246,31 @@ jobs:
 
       - name: Wait for GitHub runner to come online
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_RUNNER_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Missing repository secret GH_RUNNER_ADMIN_TOKEN. Use a fine-grained PAT or GitHub App token with repository Administration: read so CD can inspect self-hosted runner status."
+            exit 1
+          fi
 
           required_labels_json="$(jq -cn --arg labels "${SHARED_RUNNER_REQUIRED_LABELS}" '$labels | split(",")')"
           max_attempts=$(( RUNNER_BOOT_TIMEOUT_SECONDS / RUNNER_POLL_INTERVAL_SECONDS ))
 
           for attempt in $(seq 1 "$max_attempts"); do
+            api_output=""
+            if ! api_output="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runners?per_page=100" 2>&1)"; then
+              if printf '%s' "${api_output}" | grep -qiE 'HTTP 403|forbidden|Resource not accessible by integration'; then
+                echo "::error::GH_RUNNER_ADMIN_TOKEN cannot read repository self-hosted runners. The token must have repository Administration: read."
+              else
+                echo "::error::Unable to query repository self-hosted runners: ${api_output}"
+              fi
+              exit 1
+            fi
+
             online_runner_count="$(
-              gh api "/repos/${GITHUB_REPOSITORY}/actions/runners?per_page=100" |
+              printf '%s' "${api_output}" |
               jq -r --argjson required "${required_labels_json}" '
                 [
                   .runners[]
@@ -330,7 +345,7 @@ jobs:
       - name: Preflight security checks (dev)
         if: inputs.action != 'destroy'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_RUNNER_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           ./scripts/check-post-refactor-prereqs.sh \
@@ -445,7 +460,7 @@ jobs:
 
       - name: Preflight security checks (prod)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_RUNNER_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           ./scripts/check-post-refactor-prereqs.sh \
