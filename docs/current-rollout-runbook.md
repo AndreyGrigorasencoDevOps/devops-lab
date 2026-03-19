@@ -124,6 +124,12 @@ Use the latest known-good immutable image tag:
 IMAGE_TAG="sha-<short_sha>"
 ```
 
+Before you trigger the workflow, make sure the repository secret `GH_RUNNER_ADMIN_TOKEN` exists.
+
+- It must be a fine-grained PAT or GitHub App token that can read repository self-hosted runners.
+- Minimum GitHub permission: repository `Administration: Read`.
+- The default workflow `GITHUB_TOKEN` is not enough for `/repos/{owner}/{repo}/actions/runners` and will fail with `Resource not accessible by integration`.
+
 Trigger a `dev` plan run:
 
 ```bash
