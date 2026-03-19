@@ -225,7 +225,7 @@ variable "shared_runner_vm_name" {
 variable "shared_runner_vm_size" {
   type        = string
   description = "Size of self-hosted runner VM."
-  default     = "Standard_B1s"
+  default     = "Standard_F1als_v7"
 }
 
 variable "shared_runner_admin_username" {

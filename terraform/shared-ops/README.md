@@ -20,6 +20,7 @@ Keeping those controls in `terraform/shared-ops/` gives them a separate Terrafor
 - Shared ops resource group (`taskapi-shared-ops-rg-uks` by default)
 - Monthly Azure subscription budget with alerts at `50%`, `75%`, `90%`, and `100%`
 - Runner office-hours metadata stored in Terraform variables/outputs and mirrored into RG tags
+- Runner patch/right-sizing metadata used by the runbooks
 
 ## What is different from the older env files
 
@@ -30,11 +31,11 @@ Keeping those controls in `terraform/shared-ops/` gives them a separate Terrafor
 
 ## What it does not yet automate
 
-- Start/Stop VMs during off-hours deployment itself
+- Optional office-hours Start/Stop VMs deployment itself
 - Weekly patch execution on the runner VM
 - Azure Advisor review workflow
 
-Those steps remain operational, but the metadata in `vars/shared.tfvars` is now the source of truth the runbook should follow.
+Those steps remain operational, but the metadata in `vars/shared.tfvars` is now the source of truth the runbook should follow. Primary CD cost control now comes from workflow-driven VM deallocation after each run, not from a separate Azure schedule.
 
 ## Usage
 
@@ -44,9 +45,9 @@ terraform -chdir=terraform/shared-ops plan -var-file=vars/shared.tfvars
 terraform -chdir=terraform/shared-ops apply -var-file=vars/shared.tfvars
 ```
 
-## Required follow-up after apply
+## Follow-up after apply
 
-1. Deploy Azure Start/Stop VMs during off-hours using the runner schedule values from `vars/shared.tfvars`.
-2. Point the schedule at `runner_resource_group_name` / `runner_vm_name`.
+1. Use the CD workflow's hosted boot/deallocate flow as the primary cost-control path for normal deployments.
+2. Optionally deploy Azure Start/Stop VMs during off-hours using the runner schedule values from `vars/shared.tfvars` if you want an extra office-hours guardrail outside CD.
 3. Record patch evidence every Wednesday at `runner_patch_time` in the timezone from `runner_schedule_timezone`.
 4. Record monthly Azure Advisor right-sizing review evidence.

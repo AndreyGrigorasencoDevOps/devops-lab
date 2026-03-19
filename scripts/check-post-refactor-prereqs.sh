@@ -252,20 +252,28 @@ resolve_env_settings() {
 check_key_vault_secret_exists() {
   local kv_name="$1"
   local secret_name="$2"
+  local secret_query_output
 
-  if az keyvault secret show --vault-name "${kv_name}" --name "${secret_name}" --query id -o tsv >/dev/null 2>&1; then
+  if secret_query_output="$(az keyvault secret show --vault-name "${kv_name}" --name "${secret_name}" --query id -o tsv 2>&1)"; then
     pass "Key Vault secret '${secret_name}' exists in '${kv_name}'"
-  else
+  elif printf '%s' "${secret_query_output}" | grep -qiE 'ForbiddenByFirewall|Client address is not authorized'; then
+    warn "Key Vault secret '${secret_name}' could not be verified from the current shell because the Key Vault firewall blocked access"
+  elif printf '%s' "${secret_query_output}" | grep -qiE 'SecretNotFound|could not be found|was not found'; then
     fail "Key Vault secret '${secret_name}' is missing in '${kv_name}'"
+  else
+    fail "Key Vault secret '${secret_name}' could not be verified in '${kv_name}' (unexpected Azure CLI error)"
   fi
 }
 
 check_key_vault_secret_optional() {
   local kv_name="$1"
   local secret_name="$2"
+  local secret_query_output
 
-  if az keyvault secret show --vault-name "${kv_name}" --name "${secret_name}" --query id -o tsv >/dev/null 2>&1; then
+  if secret_query_output="$(az keyvault secret show --vault-name "${kv_name}" --name "${secret_name}" --query id -o tsv 2>&1)"; then
     pass "Key Vault optional secret '${secret_name}' exists in '${kv_name}'"
+  elif printf '%s' "${secret_query_output}" | grep -qiE 'ForbiddenByFirewall|Client address is not authorized'; then
+    warn "Key Vault optional secret '${secret_name}' could not be verified from the current shell because the Key Vault firewall blocked access"
   else
     warn "Key Vault optional secret '${secret_name}' is missing in '${kv_name}' (Terraform can recreate it during apply)"
   fi

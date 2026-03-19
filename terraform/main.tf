@@ -68,7 +68,7 @@ locals {
     apt-get update
     apt-get install -y ca-certificates curl gnupg lsb-release jq unzip
 
-    # A small swap file keeps the budget B1s runner usable during az/terraform bursts.
+    # A small swap file keeps the budget runner usable during az/terraform bursts.
     if ! swapon --show | grep -q .; then
       fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
       chmod 600 /swapfile
@@ -303,6 +303,14 @@ resource "azurerm_subnet" "container_app_environment_infrastructure" {
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.runtime[0].name
   address_prefixes     = var.container_app_environment_infrastructure_subnet_cidrs
+
+  delegation {
+    name = "container-apps-environment"
+
+    service_delegation {
+      name = "Microsoft.App/environments"
+    }
+  }
 
   lifecycle {
     replace_triggered_by = [azurerm_virtual_network.runtime[0]]

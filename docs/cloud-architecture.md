@@ -56,8 +56,13 @@ Examples:
 ```text
 GitHub Actions (manual CD)
             |
+            +--> Hosted bootstrap / cleanup jobs
+            |        |
+            |        v
+            |   Start / deallocate shared runner VM
+            |
             v
-Self-hosted Runner (shared VNet, private DNS)
+Self-hosted Runner (on-demand VM, shared VNet, private DNS)
             |
             v
 Terraform + Azure API
@@ -65,7 +70,7 @@ Terraform + Azure API
             +--> Azure Container Registry (DEV/PROD)
             +--> Azure Container Apps (dedicated CAE per env)
             +--> Azure Key Vault (dedicated per env + env-local private endpoint)
-            +--> Shared Ops (subscription budget + runner schedule metadata)
+            +--> Shared Ops (subscription budget + runner ops metadata)
 ```
 
 Managed by the env stack:
@@ -88,7 +93,7 @@ Managed by the shared-ops stack:
 
 - shared ops resource group
 - subscription budget
-- runner office-hours / patch / right-sizing metadata
+- runner schedule / patch / right-sizing metadata
 
 ## 6. Security baseline
 
@@ -120,7 +125,9 @@ Ownership:
 - Health endpoints:
   - `GET /health`
   - `GET /ready`
+- CD boots the shared runner on demand and deallocates it after every run.
 - Runbooks:
+  - `docs/current-rollout-runbook.md`
   - `docs/post-refactor-runbook.md`
   - `docs/security-operations.md`
 - Preflight:
