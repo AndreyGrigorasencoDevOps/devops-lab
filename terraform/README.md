@@ -137,6 +137,7 @@ Steady-state target:
 - Key Vault `bypass = None`
 - env-local Key Vault private endpoints
 - shared runner target location `uksouth`
+- repo default remains `firewall`; use `public_allow` only as a short-lived break-glass override
 
 ## CI/CD integration
 

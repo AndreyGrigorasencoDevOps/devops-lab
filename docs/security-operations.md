@@ -66,6 +66,7 @@ The gate now verifies:
 
 - No temporary exception for `AZU-0013` / `AVD-AZU-0013` should remain in steady state.
 - Expected posture: repo and Azure both converge to Key Vault `default_action = Deny` and `bypass = None`.
+- The Terraform default for `key_vault_network_mode` should stay on `firewall`; use `public_allow` only as a short-lived break-glass override.
 - If this policy fails again, fix the infrastructure drift or Terraform intent instead of reintroducing a long-lived ignore.
 
 ## 5) Runner ops cadence

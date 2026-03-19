@@ -335,8 +335,8 @@ variable "key_vault_allowed_subnet_ids" {
 
 variable "key_vault_network_mode" {
   type        = string
-  description = "Key Vault network mode: public_allow (transitional runtime compatibility) or firewall (steady-state Deny/None posture)."
-  default     = "public_allow"
+  description = "Key Vault network mode: firewall (steady-state Deny/None posture) or public_allow (temporary break-glass fallback)."
+  default     = "firewall"
   validation {
     condition     = contains(["public_allow", "firewall"], var.key_vault_network_mode)
     error_message = "key_vault_network_mode must be one of: public_allow, firewall."
