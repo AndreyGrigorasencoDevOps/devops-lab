@@ -293,7 +293,12 @@ jobs:
 
   terraform-dev:
     name: Terraform dev
-    if: inputs.environment == 'dev'
+    if: >-
+      ${{
+        always() &&
+        inputs.environment == 'dev' &&
+        needs.prepare-self-hosted-runner.result == 'success'
+      }}
     needs: [prepare-self-hosted-runner]
     runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
     environment: dev
@@ -412,7 +417,13 @@ jobs:
 
   terraform-prod:
     name: Terraform prod (plan/apply)
-    if: inputs.environment == 'prod' && inputs.action != 'destroy'
+    if: >-
+      ${{
+        always() &&
+        inputs.environment == 'prod' &&
+        inputs.action != 'destroy' &&
+        needs.prepare-self-hosted-runner.result == 'success'
+      }}
     needs: [prepare-self-hosted-runner]
     runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
     environment: prod
@@ -524,7 +535,13 @@ jobs:
 
   terraform-prod-destroy:
     name: Terraform prod (destroy)
-    if: inputs.environment == 'prod' && inputs.action == 'destroy'
+    if: >-
+      ${{
+        always() &&
+        inputs.environment == 'prod' &&
+        inputs.action == 'destroy' &&
+        needs.prepare-self-hosted-runner.result == 'success'
+      }}
     needs: [prepare-self-hosted-runner]
     runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
     environment: prod
