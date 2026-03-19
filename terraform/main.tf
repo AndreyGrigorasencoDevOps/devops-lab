@@ -308,7 +308,8 @@ resource "azurerm_subnet" "container_app_environment_infrastructure" {
     name = "container-apps-environment"
 
     service_delegation {
-      name = "Microsoft.App/environments"
+      name    = "Microsoft.App/environments"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
     }
   }
 
@@ -376,6 +377,19 @@ resource "azurerm_container_app_environment" "main" {
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main[0].id
   infrastructure_subnet_id   = azurerm_subnet.container_app_environment_infrastructure[0].id
   tags                       = local.tags
+
+  workload_profile {
+    name                  = "Consumption"
+    workload_profile_type = "Consumption"
+    minimum_count         = 0
+    maximum_count         = 0
+  }
+
+  lifecycle {
+    # Azure manages the backing infrastructure RG for a CAE; treating it as drift
+    # causes a false replacement loop after successful applies.
+    ignore_changes = [infrastructure_resource_group_name]
+  }
 }
 
 data "azurerm_container_app_environment" "shared" {
@@ -509,7 +523,9 @@ resource "azurerm_container_app" "main" {
   name                         = "${var.project}-${var.env}-app"
   container_app_environment_id = local.container_app_environment_id
   resource_group_name          = azurerm_resource_group.main.name
+  max_inactive_revisions       = 0
   revision_mode                = "Single"
+  workload_profile_name        = "Consumption"
   depends_on = [
     azurerm_private_dns_zone_virtual_network_link.runtime_key_vault,
     azurerm_virtual_network_peering.runtime_to_runner,
