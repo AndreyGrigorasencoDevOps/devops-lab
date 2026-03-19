@@ -210,22 +210,24 @@ Objective: move from baseline security to production-grade identity model.
 - [x] Phase 2 operating mode was active with pragmatic runtime compatibility (`key_vault_network_mode = public_allow` before paid normalization)
 - [x] Phase 2 operational status in `dev` (strict preflight + runner online + successful apply)
 - [x] Phase 2 operational status in `prod` (strict preflight + successful CD `plan` -> `apply`)
-- [ ] Phase 3 paid normalization rollout (dedicated CAE per env + runtime VNet + `firewall` mode)
+- [x] Phase 3 paid normalization rollout (dedicated CAE per env + runtime VNet + `firewall` mode)
 
-Current rollout status (repo target state, Azure convergence pending):
+Paid-normalization completion status:
 
-- Terraform now targets dedicated CAEs for both `dev` and `prod` with env-local runtime VNets and env-local Key Vault private endpoints.
-- Terraform tfvars now target `key_vault_network_mode = firewall` with `bypass = None`; Azure must still be converged in the rollout order from the runbook.
-- Shared runner location now targets `uksouth` on `Standard_F1als_v7`; the first recreate/register still needs a trusted local shell or break-glass path because CD depends on that runner.
-- The temporary Trivy exception remains in repo config during the rollout window; remove it only after Azure is converged to the new Key Vault posture and Trivy stays green without it.
+- Dedicated CAEs now run for both `dev` and `prod`.
+- Env-local runtime VNets and Key Vault private endpoints are in place.
+- Key Vault steady-state posture is `firewall` with `bypass = None`.
+- Shared runner now runs in `uksouth` on `Standard_F1als_v7` with the on-demand CD flow.
+- Shared ops is now budget-only; runner cost control comes from boot-on-demand and deallocate-after-run instead of schedule metadata or Azure start/stop automation.
+- The temporary Trivy rollout exception has been removed.
 
 Post-paid normalization track:
 
-- [ ] Create dedicated CAE for `dev` and `prod` (or finalize a different model only if platform constraints materially change)
-- [ ] Complete CAE VNet migration and validate private runtime access for both environments
-- [ ] Return Key Vault network mode to `firewall` (`default_action = Deny`) and remove the Trivy exception
-- [ ] Relocate shared runner platform from `eastus` back to `uksouth` and validate CD stability
-- [ ] Add cost controls: budget alerts, runner schedule/patch cadence, and periodic VM right-sizing review
+- [x] Create dedicated CAE for `dev` and `prod` (or finalize a different model only if platform constraints materially change)
+- [x] Complete CAE VNet migration and validate private runtime access for both environments
+- [x] Return Key Vault network mode to `firewall` (`default_action = Deny`) and remove the Trivy exception
+- [x] Relocate shared runner platform from `eastus` back to `uksouth` and validate CD stability
+- [x] Add baseline cost controls: subscription budget + on-demand runner boot/deallocate flow
 
 Outcome:
 Identity and secret management become auditable and operationally maintainable.

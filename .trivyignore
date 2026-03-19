@@ -1,5 +1,0 @@
-# Temporary Key Vault public network exception during paid-normalization rollout.
-# Remove immediately after both environments are confirmed on the hardened
-# Key Vault posture in Azure and Trivy stays green without this transition aid.
-AZU-0013
-AVD-AZU-0013
