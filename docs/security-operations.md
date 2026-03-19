@@ -74,10 +74,9 @@ The gate now verifies:
 - Primary cost-control path:
   - CD boots the shared runner only when needed and deallocates it after each run
   - deallocation stops VM compute charges, but OS disk charges continue
-- Patch cadence:
-  - weekly Wednesday `22:00` local ops window
-- Right-sizing review:
-  - monthly, using Azure Advisor plus runner utilization
+- Lightweight reminder:
+  - keep the runner OS patched when needed
+  - sanity-check runner size only if cost or performance starts looking wrong
 
 Source of truth:
 

@@ -218,6 +218,7 @@ Paid-normalization completion status:
 - Env-local runtime VNets and Key Vault private endpoints are in place.
 - Key Vault steady-state posture is `firewall` with `bypass = None`.
 - Shared runner now runs in `uksouth` on `Standard_F1als_v7` with the on-demand CD flow.
+- Shared ops is now budget-only; runner cost control comes from boot-on-demand and deallocate-after-run instead of schedule metadata or Azure start/stop automation.
 - The temporary Trivy rollout exception has been removed.
 
 Post-paid normalization track:
@@ -226,8 +227,7 @@ Post-paid normalization track:
 - [x] Complete CAE VNet migration and validate private runtime access for both environments
 - [x] Return Key Vault network mode to `firewall` (`default_action = Deny`) and remove the Trivy exception
 - [x] Relocate shared runner platform from `eastus` back to `uksouth` and validate CD stability
-- [x] Add baseline cost controls: subscription budget + on-demand runner deallocation
-- [ ] Continue recurring ops cadence: patch evidence and monthly Azure Advisor right-sizing review
+- [x] Add baseline cost controls: subscription budget + on-demand runner boot/deallocate flow
 
 Outcome:
 Identity and secret management become auditable and operationally maintainable.

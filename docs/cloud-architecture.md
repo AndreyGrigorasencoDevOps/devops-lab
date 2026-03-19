@@ -70,7 +70,7 @@ Terraform + Azure API
             +--> Azure Container Registry (DEV/PROD)
             +--> Azure Container Apps (dedicated CAE per env)
             +--> Azure Key Vault (dedicated per env + env-local private endpoint)
-            +--> Shared Ops (subscription budget + runner ops metadata)
+            +--> Shared Ops (subscription budget only)
 ```
 
 Managed by the env stack:
