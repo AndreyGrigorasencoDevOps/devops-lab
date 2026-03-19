@@ -5,6 +5,7 @@ Node.js (Express) Task API used as a DevOps learning project.
 ## Start Here
 
 - Main learning path: [Roadmap](./docs/ROADMAP.md)
+- Revision system: [Revision runbook](./docs/revision/revision-runbook.md)
 - Current operational baseline: [Security operations](./docs/security-operations.md)
 
 ## Current Platform Snapshot (as of March 2026)
@@ -25,6 +26,7 @@ Node.js (Express) Task API used as a DevOps learning project.
 ## Documentation Map
 
 - Learning roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md)
+- Revision runbook and assessments: [docs/revision/revision-runbook.md](./docs/revision/revision-runbook.md)
 - Local development: [docs/local-development.md](./docs/local-development.md)
 - Archived paid-normalization rollout: [docs/current-rollout-runbook.md](./docs/current-rollout-runbook.md)
 - Archived post-refactor reference: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)

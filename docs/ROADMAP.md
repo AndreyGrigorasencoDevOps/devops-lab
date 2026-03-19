@@ -1,107 +1,157 @@
-# Roadmap - Platform Evolution Plan
+# Roadmap - Junior-Ready Platform Path
 
-This roadmap is the source of truth for platform status and the learning path for a junior DevOps target.
+This roadmap is the source of truth for platform status and the recommended learning path for a junior DevOps target on the current stack.
+
+## Status Snapshot
+
+- Core platform foundations are complete through Stage 7.
+- Current recommended focus: Stage 8, then Stage 9.
+- Stages 10 and 11 are later expansion tracks and are not required for junior readiness on the current Azure Container Apps + Terraform + GitHub Actions stack.
+- Treat each completed stage as both learning evidence and portfolio evidence.
+- Companion study system: [Revision runbook](./revision/revision-runbook.md)
 
 ## How To Use This Roadmap
 
-- Follow the 8-week speedrun first (top-down execution order).
-- Use Stage 0-10 as the long-term platform map and progress tracker.
-- Treat each completed week/stage as portfolio evidence:
+- Follow the stages in numerical order.
+- Treat each completed stage as portfolio evidence:
   - workflow run links
-  - infra plan/apply outputs
-  - short write-up of decisions and tradeoffs
+  - Terraform plan/apply outputs
+  - short notes on decisions, tradeoffs, failures, and recoveries
+- Use the checklists to track both implementation progress and explanation readiness.
+- Revisit earlier stages when later work exposes a concept you still cannot explain clearly.
+- Use the stage tests and final exam in [`docs/revision/`](./revision/revision-runbook.md) to turn the roadmap into a repeatable revision loop.
 
-## 8-Week Speedrun (Balanced Track)
+## Recommended 8-10 Week Execution Plan
 
-| Week | Focus | Practical Artifact | Interview Checkpoint |
+| Window | Focus | Target stages | Primary artifact |
 | --- | --- | --- | --- |
-| 1 | CI foundations and code quality | Stable PR pipeline (`ci.yml`) with lint, tests, coverage, Sonar, dependency review | Explain branch protection and why PR-only checks exist |
-| 2 | Container quality gates | Trivy + smoke-tested image build flow | Explain shift-left security and smoke test purpose |
-| 3 | Azure identity and auth | OIDC-based GitHub -> Azure auth for dev/prod environments | Explain OIDC vs long-lived secrets |
-| 4 | Terraform core stack | Reproducible infra (`terraform/` root stack) for dev/prod | Explain backend state, tfvars, and drift risks |
-| 5 | Delivery workflow | Manual CD (`cd.yml`) with plan/apply/destroy and input validation | Explain safe deploy flow with plan before apply |
-| 6 | Promotion model and release safety | PROD digest promotion from DEV ACR + verification | Explain tag vs digest and supply-chain integrity |
-| 7 | Secrets and operational readiness | Key Vault contract + prereq checks + runbook execution | Explain secret ownership and runtime access model |
-| 8 | Production simulation and portfolio hardening | End-to-end demo runbook + incident drill notes | Walk through "commit -> CI -> image -> CD -> health checks" |
+| Weeks 1-2 | Product baseline and CI foundations | Stages 1-2 | Working service, local runbook, stable PR checks |
+| Weeks 3-4 | Container delivery, Azure runtime, and Terraform baseline | Stages 3-5 | Reproducible platform with validated image flow |
+| Weeks 5-6 | Delivery workflow and secure operations | Stages 6-7 | Manual gated CD, OIDC, Key Vault/RBAC, private access path |
+| Weeks 7-8 | Observability, incident response, and release readiness | Stage 8 | Dashboards, alerts, drills, recovery notes |
+| Weeks 9-10 | Junior readiness and portfolio proof | Stage 9 | End-to-end release demo, evidence pack, explain-back |
+| Later expansion | Multi-service and Kubernetes/AKS practice | Stages 10-11 | Python service and orchestration experience |
 
 ---
 
-## Stage 0 - From Scratch Product Build
+## Stage 1 - Product Build and Local Runtime
 
-Objective: capture the full origin story before DevOps hardening phases.
+Objective:
+Establish the service baseline and local developer workflow before adding automation and cloud complexity.
 
-- [x] Bootstrapped project repository from zero
-- [x] Implemented Node.js/Express Task API from scratch
-- [x] Defined health/readiness/info endpoint contract
-- [x] Added local runtime flow (`npm run dev`) and env contract (`.env.example`)
-- [x] Added local containerized flow (`Dockerfile`, `docker-compose.yml`)
-- [x] Added baseline tests and lint before cloud delivery phases
+Why it matters:
+You troubleshoot DevOps systems more effectively when you understand the application contract, local runtime, and basic failure modes end to end.
+
+Checklist:
+
+- [x] Bootstrap the project repository from zero
+- [x] Implement the Node.js/Express Task API from scratch
+- [x] Define `/health`, `/ready`, and `/info` endpoint contracts
+- [x] Add a local runtime flow (`npm run dev`) and env contract (`.env.example`)
+- [x] Add a local containerized flow (`Dockerfile`, `docker-compose.yml`)
+- [x] Add baseline tests and lint before cloud delivery phases
 
 Outcome:
-The product foundation was built manually end-to-end before CI/CD and cloud maturity stages.
+The product foundation exists with clear runtime and health contracts.
+
+Portfolio / Interview checkpoint:
+Walk through the local run flows and explain why the service exposes separate liveness, readiness, and info endpoints.
 
 ---
 
-## Stage 1 - Quality and Testing (Foundation)
+## Stage 2 - Quality Gates and CI Foundations
 
-Objective: enforce reliable quality gates before merge.
+Objective:
+Enforce reliable merge-time checks before artifact build and deployment.
 
-- [x] ESLint strict setup (flat config)
-- [x] PR quality checks on `main`
-- [x] Unit + integration tests (`node:test`, `supertest`)
-- [x] Coverage reports (`c8` + `lcov`)
-- [x] Conventional PR title validation
-- [x] Dependency review on pull requests
-- [x] Sonar analysis in CI (token-gated and fork-safe)
+Why it matters:
+Strong CI foundations reduce broken mainline changes and create a safe base for later delivery automation.
+
+Checklist:
+
+- [x] Enforce ESLint with a strict flat config
+- [x] Protect `main` with pull-request quality checks
+- [x] Add unit and integration tests (`node:test`, `supertest`)
+- [x] Publish coverage reports (`c8` + `lcov`)
+- [x] Validate conventional pull-request titles
+- [x] Run dependency review on pull requests
+- [x] Run Sonar analysis in CI (token-gated and fork-safe)
 
 Outcome:
-PRs are blocked on quality and security baseline checks.
+Pull requests are blocked on a quality and security baseline before merge.
+
+Portfolio / Interview checkpoint:
+Explain branch protection, why PR-only checks exist, and what should fail before code reaches `main`.
 
 ---
 
-## Stage 2 - Container CI and Artifact Quality
+## Stage 3 - Container Artifact Delivery
 
-Objective: treat container images as verified release artifacts.
+Objective:
+Treat the container image as a validated release artifact rather than a byproduct of the build.
 
-- [x] Build Docker image in GitHub Actions
-- [x] Immutable image tag pattern (`sha-<short_sha>`)
-- [x] Trivy filesystem and config scans
-- [x] Docker smoke test against `/health`
-- [x] Build and push to DEV ACR on push to `main`
-- [x] Verify pushed image digest in ACR
-- [x] CI summary with image tag/ref/digest for CD handoff
-- [x] Deprecated old GHCR deploy-source flow (ACR is deployment source)
+Why it matters:
+A trustworthy image pipeline creates the handoff point between CI, security checks, and deployment.
+
+Checklist:
+
+- [x] Build the Docker image in GitHub Actions
+- [x] Use immutable image tags (`sha-<short_sha>`)
+- [x] Run Trivy filesystem and config scans
+- [x] Run a Docker smoke test against `/health`
+- [x] Build and push images to DEV ACR on push to `main`
+- [x] Verify pushed image digests in ACR
+- [x] Publish a CI summary with image tag, image ref, and digest for CD handoff
+- [x] Retire the old GHCR deployment-source flow
 
 Outcome:
-Each push to `main` produces a validated image and deployment metadata.
+Each push to `main` produces a validated image plus the metadata needed for controlled deployment.
+
+Portfolio / Interview checkpoint:
+Explain shift-left security, why smoke tests belong in CI, and why immutable tags matter.
 
 ---
 
-## Stage 3 - Azure Runtime Platform (Container Apps)
+## Stage 4 - Azure Runtime Platform
 
-Objective: run the service in Azure with secure identity-based access.
+Objective:
+Run the service in Azure using an identity-based runtime model.
 
-- [x] Azure Container Apps target selected and running
-- [x] Container Apps Environment and Log Analytics baseline
-- [x] Managed identity on Container App
-- [x] `AcrPull` role assignment for runtime identity
-- [x] Key Vault integration pattern introduced
-- [x] `Key Vault Secrets User` role assignment for runtime identity
-- [x] Health endpoints used as deployment/runtime checks
+Why it matters:
+A real platform target makes the delivery pipeline and operational model meaningful.
+
+Checklist:
+
+- [x] Select Azure Container Apps as the runtime target and get the service running
+- [x] Establish the Container Apps Environment and Log Analytics baseline
+- [x] Attach a managed identity to the Container App
+- [x] Grant `AcrPull` to the runtime identity
+- [x] Introduce the Key Vault integration pattern
+- [x] Grant `Key Vault Secrets User` to the runtime identity
+- [x] Use health endpoints as deployment and runtime checks
 
 Outcome:
-Application runs on Azure Container Apps with managed identity and role-based access.
+The application runs on Azure Container Apps with managed identity and role-based access.
+
+Portfolio / Interview checkpoint:
+Explain why Container Apps fits this stage, how managed identity replaces app secrets, and how readiness checks protect deployments.
 
 ---
 
-## Stage 4 - Terraform Foundation (Reproducible Infra)
+## Stage 5 - Terraform Foundation
 
-Objective: provision and evolve infra from code, not manual clicks.
+Objective:
+Provision and evolve the platform from code instead of manual portal changes.
 
-- [x] Single Terraform root stack (`terraform/`)
-- [x] Remote backend split by environment (`backend/dev.hcl`, `backend/prod.hcl`)
-- [x] Environment tfvars split (`vars/dev.tfvars`, `vars/prod.tfvars`)
-- [x] Core resources managed in Terraform:
+Why it matters:
+Environment separation, repeatability, and drift visibility are core infrastructure skills for junior DevOps work.
+
+Checklist:
+
+- [x] Consolidate infrastructure into a single Terraform root stack (`terraform/`)
+- [x] Split remote backends by environment (`backend/dev.hcl`, `backend/prod.hcl`)
+- [x] Split environment tfvars (`vars/dev.tfvars`, `vars/prod.tfvars`)
+- [x] Manage the core platform resources in Terraform:
   - Resource Group
   - ACR
   - PostgreSQL Flexible Server + application database
@@ -109,158 +159,194 @@ Objective: provision and evolve infra from code, not manual clicks.
   - Log Analytics Workspace
   - Shared-or-dedicated CAE model
   - Shared-or-dedicated Key Vault model
-- [x] Infra outputs for deployment and visibility
-- [x] Standardized tags by project/environment
-- [x] Deprecated old `terraform/environments/*` stack layout
-- [ ] Optional modules refactor for larger scale reuse (recommended after Stage 9 Phase 3 stabilization)
+- [x] Publish infrastructure outputs for deployment and visibility
+- [x] Standardize tags by project and environment
+- [x] Retire the old `terraform/environments/*` stack layout
+- [ ] Optionally refactor into modules for larger-scale reuse after the core platform path is stable
 
 Outcome:
-Dev/prod infrastructure is reproducible and versioned with Terraform.
+Dev and prod infrastructure are reproducible, versioned, and environment-aware.
+
+Portfolio / Interview checkpoint:
+Explain backend state, tfvars, environment separation, and the main drift risks in a shared cloud subscription.
 
 ---
 
-## Stage 5 - Delivery Workflow (CI/CD + Promotion)
+## Stage 6 - Delivery Workflow
 
-Objective: make deployments predictable, auditable, and environment-aware.
+Objective:
+Make deployments predictable, auditable, and environment-aware.
 
-- [x] CI split to reduce skipped-job noise:
+Why it matters:
+Delivery maturity is where quality checks, artifact trust, runtime configuration, and operator safety start working together.
+
+Checklist:
+
+- [x] Split CI by event to reduce skipped-job noise:
   - PR workflow: `.github/workflows/ci.yml`
   - Push workflow: `.github/workflows/ci-push.yml`
-- [x] Manual CD workflow (`.github/workflows/cd.yml`) with:
-  - `environment` input (`dev|prod`)
-  - `action` input (`plan|apply|destroy`)
-  - `image_tag` validation for plan/apply
-- [x] Terraform-driven deploy path for dev and prod
-- [x] PROD digest promotion from DEV ACR before Terraform plan/apply
-- [x] CD summary for execution context and selected backend/tfvars
-- [x] Post-refactor runbook + prereq checker script added
-- [x] State adoption step for existing Container App in CD apply path
-- [x] Phase 1 Key Vault stabilization mode in CD/Terraform (`public_allow`)
-- [x] Transitional KV bootstrap in CD when existing vault firewall is still `Deny`
-- [x] RBAC propagation wait before Container App revision updates
-- [x] Deprecated old tag-driven direct prod deployment flow
-- [x] Phase 2 status: Terraform CD jobs moved to self-hosted runner in VNet with mandatory preflight gate
-- [x] On-demand shared runner flow in CD (hosted boot -> self-hosted Terraform -> hosted deallocate)
-- [x] Environment protection rules review (required reviewers, prod safeguards)
-- [x] Policy decision recorded: keep `prod destroy` path (manual, explicit reset only)
+- [x] Provide a manual CD workflow (`.github/workflows/cd.yml`) with validated `environment`, `action`, and `image_tag` inputs
+- [x] Make Terraform the deployment engine for both `dev` and `prod`
+- [x] Promote PROD images from DEV ACR by digest before Terraform plan/apply
+- [x] Publish CD summaries with execution context and selected backend/tfvars
+- [x] Add a post-refactor runbook and prerequisite checker script
+- [x] Adopt existing Container App state during CD apply when needed
+- [x] Support Phase 1 Key Vault stabilization mode in CD/Terraform (`public_allow`)
+- [x] Add transitional Key Vault bootstrap handling when an existing vault still has firewall `Deny`
+- [x] Add an RBAC propagation wait before Container App revision updates
+- [x] Retire the old tag-driven direct production deployment flow
+- [x] Move Terraform CD jobs to a self-hosted runner in the VNet with a mandatory preflight gate
+- [x] Implement an on-demand shared runner flow in CD (hosted boot -> self-hosted Terraform -> hosted deallocate)
+- [x] Review environment protection rules, required reviewers, and production safeguards
+- [x] Keep a manual `prod destroy` path as an explicit reset-only policy decision
 
 Outcome:
 Deployments are controlled, traceable, and safer across environments.
 
+Portfolio / Interview checkpoint:
+Explain why the safe release path is `plan` before `apply`, why prod promotion uses digests instead of tags, and why the runner path lives inside the network boundary.
+
 ---
 
-## Stage 6 - Python Service (Stack Expansion)
+## Stage 7 - Identity, Secrets, and Secure Operations
 
-Objective: add a second service to practice multi-service operations.
+Objective:
+Move from baseline secret usage to an auditable identity and network posture.
+
+Why it matters:
+This stage turns the platform from “working” into “operationally defensible.”
+
+Checklist:
+
+- [x] Authenticate GitHub Actions to Azure with OIDC
+- [x] Use managed identity + RBAC for runtime services
+- [x] Establish the Key Vault integration baseline
+- [x] Document Phase 1 secret-resolution stabilization (`RBAC-only + public allow`)
+- [x] Migrate to private runner-path Key Vault access plus a self-hosted runner in the VNet
+- [x] Define a secret rotation runbook and ownership model
+- [x] Define an access review cadence for CI, runtime, and human identities
+- [x] Add stronger policy checks for least-privilege verification
+- [x] Operate Phase 2 successfully with pragmatic runtime compatibility (`key_vault_network_mode = public_allow` before paid normalization)
+- [x] Validate Phase 2 in `dev` with strict preflight, runner online, and successful apply
+- [x] Validate Phase 2 in `prod` with strict preflight and successful CD `plan` -> `apply`
+- [x] Complete Phase 3 paid normalization (dedicated CAE per env + runtime VNet + `firewall` mode)
+- [x] Create dedicated CAEs for `dev` and `prod` (or formally keep a different model only if platform constraints materially change)
+- [x] Complete CAE VNet migration and validate private runtime access for both environments
+- [x] Restore Key Vault network mode to `firewall` (`default_action = Deny`) and remove the temporary Trivy exception
+- [x] Relocate the shared runner platform from `eastus` back to `uksouth` and validate CD stability
+- [x] Add baseline cost controls with a subscription budget plus on-demand runner boot/deallocate flow
+
+Outcome:
+Identity and secret management are auditable and operationally maintainable. The current steady-state baseline is dedicated CAEs per environment, env-local runtime VNets and Key Vault private endpoints, Key Vault `firewall` mode with `bypass = None`, and an on-demand shared runner in `uksouth`.
+
+Portfolio / Interview checkpoint:
+Explain OIDC vs long-lived secrets, secret ownership boundaries, why private Key Vault access matters, and how the current steady-state posture differs from the earlier stabilization phases.
+
+---
+
+## Stage 8 - Observability, Incident Response, and Release Readiness
+
+Objective:
+Build production-thinking habits around signals, alerts, incident handling, and recovery.
+
+Why it matters:
+Being able to detect, explain, and recover from failure is what makes a platform job-ready instead of just deployable.
+
+Checklist:
+
+- [x] Add structured application logs in app code (Pino)
+- [ ] Build cloud log dashboards for availability, errors, latency, and saturation
+- [ ] Configure alert rules for health, errors, and saturation, and validate at least one alert path end to end
+- [ ] Run incident drills for DB outage, dependency timeout, bad deploy, and one failed-deploy or rollback recovery
+- [ ] Create a post-incident notes template and recovery checklist
+
+Outcome:
+Service reliability is measured, alerts are actionable, and failure handling becomes repeatable.
+
+Portfolio / Interview checkpoint:
+Walk through one alert, one failure drill, and the recovery steps you would follow before, during, and after an incident.
+
+---
+
+## Stage 9 - Junior Readiness and Portfolio Evidence
+
+Objective:
+Prove you can explain, operate, and present the platform as junior-level delivery evidence.
+
+Why it matters:
+Hiring readiness depends on explanation quality and operational proof, not only on how many technologies you touched.
+
+Checklist:
+
+- [ ] Explain and operate both CI workflows (PR and push) and describe when each should fail
+- [ ] Run CD safely (`plan` before `apply`) and recover from a failed deploy
+- [ ] Trace one image from commit SHA to the running environment by digest
+- [ ] Manage Terraform backends and tfvars per environment without state confusion
+- [x] Validate Key Vault and RBAC prerequisites before deployment
+- [ ] Demonstrate one end-to-end release in a short screen-share:
+  - commit -> PR checks -> merge -> CI Push artifact -> CD apply -> health checks
+- [ ] Assemble one portfolio evidence pack:
+  - links to successful workflow runs
+  - sample Terraform plan/apply outputs
+  - short incident and recovery notes
+- [ ] Prepare a short explain-back covering the main platform tradeoffs and why those decisions were made
+
+Outcome:
+You are junior-ready for this stack when you can both operate the platform safely and explain its tradeoffs clearly.
+
+Portfolio / Interview checkpoint:
+Be ready to walk through the full release path, justify the major design choices, and show evidence instead of speaking only in theory.
+
+---
+
+## Stage 10 - Multi-Service Expansion
+
+Objective:
+Add a second service so the platform supports service-to-service behavior instead of a single deployable only.
+
+Why it matters:
+This is the next meaningful step after junior readiness because it introduces integration boundaries, retries, and cross-service operational thinking.
+
+Checklist:
 
 - [ ] Create `python-service/` (FastAPI)
 - [ ] Add `/health` and one business endpoint
 - [ ] Add pytest + coverage
-- [ ] Dockerize Python service
-- [ ] Extend compose to run Node + Python + Postgres
+- [ ] Dockerize the Python service
+- [ ] Extend Compose to run Node + Python + Postgres
 - [ ] Add CI checks for Python (lint/test)
-- [ ] Add Node -> Python integration path with retries/timeouts
+- [ ] Add a Node -> Python integration path with retries/timeouts
 
 Outcome:
-Multi-service architecture with service-to-service communication and CI quality gates.
+The platform evolves into a small multi-service architecture with service-to-service communication and CI quality gates.
+
+Portfolio / Interview checkpoint:
+Explain where the integration boundary lives, what retry and timeout behavior is needed, and how CI proves both services still work together.
 
 ---
 
-## Stage 7 - Kubernetes Runtime (AKS)
+## Stage 11 - Kubernetes and AKS Expansion
 
-Objective: learn orchestration and deployment control beyond single app runtime.
+Objective:
+Learn orchestration and infrastructure patterns beyond the current Container Apps runtime model.
+
+Why it matters:
+AKS is valuable expansion work, but it should be built on top of an already well-understood delivery and operations foundation.
+
+Checklist:
 
 - [ ] Add Kubernetes manifests (`k8s/`)
-- [ ] Configure liveness/readiness probes
-- [ ] Define requests/limits
+- [ ] Configure liveness and readiness probes
+- [ ] Define resource requests and limits
 - [ ] Add ingress routing
 - [ ] Add autoscaling baseline (HPA)
-
-Outcome:
-Service becomes operable in Kubernetes with health and scaling controls.
-
----
-
-## Stage 8 - Terraform Expansion for AKS
-
-Objective: manage Kubernetes infrastructure through Terraform.
-
-- [ ] Add VNet/Subnet baseline for AKS
+- [ ] Add a VNet and subnet baseline for AKS
 - [ ] Provision AKS via Terraform
-- [ ] Attach ACR pull permissions to AKS identity
-- [ ] Document network model decision (kubenet vs Azure CNI)
+- [ ] Attach ACR pull permissions to the AKS identity
+- [ ] Document the network model decision (kubenet vs Azure CNI)
 
 Outcome:
-AKS platform is reproducible through Terraform with explicit network/security decisions.
+The service becomes operable in Kubernetes, and the AKS platform is reproducible through Terraform with explicit network and security decisions.
 
----
-
-## Stage 9 - Security and Identity Maturity
-
-Objective: move from baseline security to production-grade identity model.
-
-- [x] OIDC authentication from GitHub Actions to Azure
-- [x] Managed identity + RBAC pattern for runtime services
-- [x] Key Vault integration baseline introduced
-- [x] Phase 1 secret-resolution stabilization documented (`RBAC-only + public allow`)
-- [x] Phase 2 migration to private runner-path Key Vault access + self-hosted runner in VNet
-- [x] Secret rotation runbook and ownership model
-- [x] Access review cadence for CI/runtime/human identities
-- [x] Add stronger policy checks (least privilege verification)
-- [x] Phase 2 operating mode was active with pragmatic runtime compatibility (`key_vault_network_mode = public_allow` before paid normalization)
-- [x] Phase 2 operational status in `dev` (strict preflight + runner online + successful apply)
-- [x] Phase 2 operational status in `prod` (strict preflight + successful CD `plan` -> `apply`)
-- [x] Phase 3 paid normalization rollout (dedicated CAE per env + runtime VNet + `firewall` mode)
-
-Paid-normalization completion status:
-
-- Dedicated CAEs now run for both `dev` and `prod`.
-- Env-local runtime VNets and Key Vault private endpoints are in place.
-- Key Vault steady-state posture is `firewall` with `bypass = None`.
-- Shared runner now runs in `uksouth` on `Standard_F1als_v7` with the on-demand CD flow.
-- Shared ops is now budget-only; runner cost control comes from boot-on-demand and deallocate-after-run instead of schedule metadata or Azure start/stop automation.
-- The temporary Trivy rollout exception has been removed.
-
-Post-paid normalization track:
-
-- [x] Create dedicated CAE for `dev` and `prod` (or finalize a different model only if platform constraints materially change)
-- [x] Complete CAE VNet migration and validate private runtime access for both environments
-- [x] Return Key Vault network mode to `firewall` (`default_action = Deny`) and remove the Trivy exception
-- [x] Relocate shared runner platform from `eastus` back to `uksouth` and validate CD stability
-- [x] Add baseline cost controls: subscription budget + on-demand runner boot/deallocate flow
-
-Outcome:
-Identity and secret management become auditable and operationally maintainable.
-
----
-
-## Stage 10 - Observability and Operations
-
-Objective: build production-thinking habits (monitoring, resilience, incident response).
-
-- [x] Structured application logs in app code (Pino)
-- [ ] Cloud log dashboards for key signals
-- [ ] Alert rules for health, errors, and saturation
-- [ ] Basic incident drills (DB down, dependency timeout, bad deploy)
-- [ ] Post-incident notes template and recovery checklist
-
-Outcome:
-Service reliability is measured and failures are handled with repeatable process.
-
----
-
-## Junior Readiness Exit Criteria (2-Month Target)
-
-You are "junior-ready" for this stack when you can consistently do the following:
-
-- [ ] Explain and operate both CI workflows (PR and push) and when each should fail.
-- [ ] Run CD safely (`plan` before `apply`) and recover from a failed deploy.
-- [ ] Trace one image from commit SHA to running environment by digest.
-- [ ] Manage Terraform backend/tfvars per environment without state confusion.
-- [x] Validate Key Vault + RBAC prerequisites before deployment.
-- [ ] Demonstrate one end-to-end release in a short screen-share:
-  - commit -> PR checks -> merge -> CI Push artifact -> CD apply -> health checks
-- [ ] Provide portfolio evidence:
-  - links to successful workflow runs
-  - sample Terraform plan/apply outputs
-  - short incident/recovery notes
+Portfolio / Interview checkpoint:
+Explain when Container Apps is enough, when AKS becomes justified, and what new operational responsibilities Kubernetes introduces.
