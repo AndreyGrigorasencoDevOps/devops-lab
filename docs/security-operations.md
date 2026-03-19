@@ -71,6 +71,9 @@ The gate now verifies:
 
 ## 5) Runner ops cadence
 
+- Primary cost-control path:
+  - CD boots the shared runner only when needed and deallocates it after each run
+  - deallocation stops VM compute charges, but OS disk charges continue
 - Office-hours target:
   - Mon-Fri `07:00` start / `23:00` stop in `Europe/Paris`
 - Patch cadence:
@@ -82,6 +85,8 @@ Source of truth:
 
 - `terraform/shared-ops/vars/shared.tfvars`
 - `terraform/shared-ops/README.md`
+
+Office-hours metadata is now optional secondary automation rather than the primary CD cost-control mechanism.
 
 ## 6) Break-glass posture
 

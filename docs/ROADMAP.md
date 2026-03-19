@@ -140,6 +140,7 @@ Objective: make deployments predictable, auditable, and environment-aware.
 - [x] RBAC propagation wait before Container App revision updates
 - [x] Deprecated old tag-driven direct prod deployment flow
 - [x] Phase 2 status: Terraform CD jobs moved to self-hosted runner in VNet with mandatory preflight gate
+- [x] On-demand shared runner flow in CD (hosted boot -> self-hosted Terraform -> hosted deallocate)
 - [x] Environment protection rules review (required reviewers, prod safeguards)
 - [x] Policy decision recorded: keep `prod destroy` path (manual, explicit reset only)
 
@@ -215,7 +216,7 @@ Current rollout status (repo target state, Azure convergence pending):
 
 - Terraform now targets dedicated CAEs for both `dev` and `prod` with env-local runtime VNets and env-local Key Vault private endpoints.
 - Terraform tfvars now target `key_vault_network_mode = firewall` with `bypass = None`; Azure must still be converged in the rollout order from the runbook.
-- Shared runner location now targets `uksouth`; relocate the runner from a trusted local shell or temporary break-glass runner, not from the VM being replaced.
+- Shared runner location now targets `uksouth` on `Standard_F1als_v7`; the first recreate/register still needs a trusted local shell or break-glass path because CD depends on that runner.
 - The temporary Trivy exception remains in repo config during the rollout window; remove it only after Azure is converged to the new Key Vault posture and Trivy stays green without it.
 
 Post-paid normalization track:

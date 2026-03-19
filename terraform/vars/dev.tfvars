@@ -19,7 +19,7 @@ rbac_propagation_wait_seconds      = 45
 
 enable_shared_runner_platform = true
 shared_runner_enable_vm       = true
-shared_runner_vm_size         = "Standard_B1s"
+shared_runner_vm_size         = "Standard_F1als_v7"
 
 app_env_vars = {
   NODE_ENV = "production"

@@ -14,7 +14,7 @@ output "budget_amount" {
 }
 
 output "runner_schedule_metadata" {
-  description = "Runner schedule metadata that should be mirrored in Start/Stop VMs during off-hours."
+  description = "Runner schedule metadata for optional office-hours automation and ops runbooks."
   value = {
     resource_group_name           = var.runner_resource_group_name
     vm_name                       = var.runner_vm_name

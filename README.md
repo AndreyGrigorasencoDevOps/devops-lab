@@ -5,7 +5,7 @@ Node.js (Express) Task API used as a DevOps learning project.
 ## Start Here
 
 - Main learning path: [Roadmap](./docs/ROADMAP.md)
-- Current operational checklist: [Post-refactor runbook](./docs/post-refactor-runbook.md)
+- Current operational checklist: [Current rollout runbook](./docs/current-rollout-runbook.md)
 
 ## Current Platform Snapshot (as of March 2026)
 
@@ -26,8 +26,9 @@ Node.js (Express) Task API used as a DevOps learning project.
 
 - Learning roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md)
 - Local development: [docs/local-development.md](./docs/local-development.md)
-- Post-refactor operations: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)
-- Phase 2 manual cutover: [docs/phase2-cutover-next-steps.md](./docs/phase2-cutover-next-steps.md)
+- Current rollout checklist: [docs/current-rollout-runbook.md](./docs/current-rollout-runbook.md)
+- Post-refactor reference: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)
+- Archived Phase 2 cutover: [docs/phase2-cutover-next-steps.md](./docs/phase2-cutover-next-steps.md)
 - Legacy archive note: [docs/archive/terraform-environments-legacy.md](./docs/archive/terraform-environments-legacy.md)
 - Security operations: [docs/security-operations.md](./docs/security-operations.md)
 - Terraform usage: [terraform/README.md](./terraform/README.md)
@@ -88,6 +89,7 @@ See [docs/local-development.md](./docs/local-development.md) for the full macOS 
 |   L-- check-post-refactor-prereqs.sh
 +-- docs/
 |   +-- ROADMAP.md
+|   +-- current-rollout-runbook.md
 |   +-- post-refactor-runbook.md
 |   +-- phase2-cutover-next-steps.md
 |   +-- archive/

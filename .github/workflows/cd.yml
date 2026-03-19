@@ -26,12 +26,17 @@ on:
         type: string
 
 concurrency:
-  group: cd-${{ inputs.environment }}-${{ inputs.action }}
+  group: cd-shared-runner
   cancel-in-progress: false
 
 env:
   IMAGE_NAME: task-api
   TERRAFORM_DIR: terraform
+  SHARED_RUNNER_RESOURCE_GROUP: taskapi-dev-rg-uks
+  SHARED_RUNNER_VM_NAME: taskapi-shared-cd-runner-01
+  SHARED_RUNNER_REQUIRED_LABELS: taskapi-cd,vnet
+  RUNNER_BOOT_TIMEOUT_SECONDS: "600"
+  RUNNER_POLL_INTERVAL_SECONDS: "10"
 
 jobs:
   validate-inputs:
@@ -159,10 +164,122 @@ jobs:
             exit 1
           fi
 
+  prod-destroy-approval-gate:
+    name: Prod destroy approval gate
+    if: inputs.environment == 'prod' && inputs.action == 'destroy'
+    needs: [validate-inputs]
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Confirm prod destroy approval
+        run: echo "Prod destroy approval granted."
+
+  prepare-self-hosted-runner:
+    name: Prepare shared self-hosted runner
+    needs: [validate-inputs, promote-prod-image, prod-destroy-approval-gate]
+    if: >-
+      ${{
+        always() &&
+        needs.validate-inputs.result == 'success' &&
+        (
+          inputs.environment == 'dev' ||
+          (inputs.environment == 'prod' && inputs.action != 'destroy' && needs.promote-prod-image.result == 'success') ||
+          (inputs.environment == 'prod' && inputs.action == 'destroy' && needs.prod-destroy-approval-gate.result == 'success')
+        )
+      }}
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Azure login (OIDC, DEV runner control plane)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure shared runner VM exists
+        run: |
+          set -euo pipefail
+          if ! az vm show \
+            --resource-group "${{ env.SHARED_RUNNER_RESOURCE_GROUP }}" \
+            --name "${{ env.SHARED_RUNNER_VM_NAME }}" \
+            --query id -o tsv >/dev/null 2>&1; then
+            echo "::error::Shared runner VM '${{ env.SHARED_RUNNER_VM_NAME }}' does not exist yet. Recreate and register it from a trusted local shell first."
+            exit 1
+          fi
+
+      - name: Start shared runner VM
+        run: |
+          set -euo pipefail
+          az vm start \
+            --resource-group "${{ env.SHARED_RUNNER_RESOURCE_GROUP }}" \
+            --name "${{ env.SHARED_RUNNER_VM_NAME }}"
+
+      - name: Wait for shared runner VM power state
+        run: |
+          set -euo pipefail
+
+          max_attempts=$(( RUNNER_BOOT_TIMEOUT_SECONDS / RUNNER_POLL_INTERVAL_SECONDS ))
+          for attempt in $(seq 1 "$max_attempts"); do
+            power_state="$(az vm get-instance-view \
+              --resource-group "${{ env.SHARED_RUNNER_RESOURCE_GROUP }}" \
+              --name "${{ env.SHARED_RUNNER_VM_NAME }}" \
+              --query "instanceView.statuses[?starts_with(code, 'PowerState/')].code | [0]" \
+              -o tsv)"
+
+            if [[ "$power_state" == "PowerState/running" ]]; then
+              echo "Shared runner VM is running."
+              exit 0
+            fi
+
+            sleep "${RUNNER_POLL_INTERVAL_SECONDS}"
+          done
+
+          echo "::error::Timed out waiting for shared runner VM to reach PowerState/running."
+          exit 1
+
+      - name: Wait for GitHub runner to come online
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          required_labels_json="$(jq -cn --arg labels "${SHARED_RUNNER_REQUIRED_LABELS}" '$labels | split(",")')"
+          max_attempts=$(( RUNNER_BOOT_TIMEOUT_SECONDS / RUNNER_POLL_INTERVAL_SECONDS ))
+
+          for attempt in $(seq 1 "$max_attempts"); do
+            online_runner_count="$(
+              gh api "/repos/${GITHUB_REPOSITORY}/actions/runners?per_page=100" |
+              jq -r --argjson required "${required_labels_json}" '
+                [
+                  .runners[]
+                  | select(.status == "online")
+                  | select((( $required - (.labels | map(.name)) ) | length) == 0)
+                ] | length
+              '
+            )"
+
+            if [[ "${online_runner_count}" -ge 1 ]]; then
+              echo "Shared runner is online."
+              exit 0
+            fi
+
+            sleep "${RUNNER_POLL_INTERVAL_SECONDS}"
+          done
+
+          echo "::error::Timed out waiting for the shared GitHub runner to come online. If the VM was just recreated, register the runner manually once and rerun CD."
+          exit 1
+
   terraform-dev:
     name: Terraform dev
     if: inputs.environment == 'dev'
-    needs: [validate-inputs]
+    needs: [prepare-self-hosted-runner]
     runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
     environment: dev
     permissions:
@@ -281,7 +398,7 @@ jobs:
   terraform-prod:
     name: Terraform prod (plan/apply)
     if: inputs.environment == 'prod' && inputs.action != 'destroy'
-    needs: [validate-inputs, promote-prod-image]
+    needs: [prepare-self-hosted-runner]
     runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
     environment: prod
     permissions:
@@ -393,7 +510,7 @@ jobs:
   terraform-prod-destroy:
     name: Terraform prod (destroy)
     if: inputs.environment == 'prod' && inputs.action == 'destroy'
-    needs: [validate-inputs]
+    needs: [prepare-self-hosted-runner]
     runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
     environment: prod
     permissions:
@@ -441,3 +558,66 @@ jobs:
 
       - name: Terraform destroy (prod)
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/prod.tfvars -auto-approve
+
+  cleanup-self-hosted-runner:
+    name: Deallocate shared self-hosted runner
+    needs: [prepare-self-hosted-runner, terraform-dev, terraform-prod, terraform-prod-destroy]
+    if: >-
+      ${{
+        always() &&
+        (
+          needs.prepare-self-hosted-runner.result == 'success' ||
+          needs.prepare-self-hosted-runner.result == 'failure'
+        )
+      }}
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Azure login (OIDC, DEV runner control plane)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deallocate shared runner VM
+        run: |
+          set -euo pipefail
+
+          if ! az vm show \
+            --resource-group "${{ env.SHARED_RUNNER_RESOURCE_GROUP }}" \
+            --name "${{ env.SHARED_RUNNER_VM_NAME }}" \
+            --query id -o tsv >/dev/null 2>&1; then
+            echo "Shared runner VM not found; nothing to deallocate."
+            exit 0
+          fi
+
+          az vm deallocate \
+            --resource-group "${{ env.SHARED_RUNNER_RESOURCE_GROUP }}" \
+            --name "${{ env.SHARED_RUNNER_VM_NAME }}"
+
+      - name: Confirm shared runner VM is deallocated
+        run: |
+          set -euo pipefail
+
+          if ! az vm show \
+            --resource-group "${{ env.SHARED_RUNNER_RESOURCE_GROUP }}" \
+            --name "${{ env.SHARED_RUNNER_VM_NAME }}" \
+            --query id -o tsv >/dev/null 2>&1; then
+            echo "Shared runner VM no longer exists."
+            exit 0
+          fi
+
+          power_state="$(az vm get-instance-view \
+            --resource-group "${{ env.SHARED_RUNNER_RESOURCE_GROUP }}" \
+            --name "${{ env.SHARED_RUNNER_VM_NAME }}" \
+            --query "instanceView.statuses[?starts_with(code, 'PowerState/')].code | [0]" \
+            -o tsv)"
+
+          if [[ "$power_state" != "PowerState/deallocated" ]]; then
+            echo "::error::Expected shared runner VM to be deallocated, got '${power_state}'."
+            exit 1
+          fi

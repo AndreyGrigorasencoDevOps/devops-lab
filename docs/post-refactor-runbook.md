@@ -2,6 +2,10 @@
 
 This runbook is the operational baseline after the paid-normalization repo changes landed.
 
+Use `docs/current-rollout-runbook.md` first if you want the shortest current checklist.
+
+This file is the broader reference document behind that checklist.
+
 The repository now targets:
 
 - dedicated CAE per environment
@@ -9,8 +13,9 @@ The repository now targets:
 - env-local Key Vault private endpoints
 - `key_vault_network_mode = "firewall"` with `bypass = None`
 - shared runner target location `uksouth`
+- on-demand shared runner CD flow (hosted boot -> self-hosted Terraform -> hosted deallocate)
 - shared-ops budget metadata under `terraform/shared-ops/`
-- shared runner target size `Standard_B1s`
+- shared runner target size `Standard_F1als_v7`
 
 Important:
 
@@ -21,8 +26,8 @@ Important:
 
 - `DONE`: Phase 2 cutover remains the last confirmed Azure baseline.
 - `DONE`: Repo configuration now targets paid normalization.
-- `DONE`: shared runner target size has been reduced to `Standard_B1s` for cost control.
-- `NEXT`: converge Azure in this order: `dev`, `prod`, shared runner relocation, shared-ops apply.
+- `DONE`: shared runner target size now targets `Standard_F1als_v7` and CD now deallocates the VM after each run.
+- `NEXT`: recreate/register the shared runner in Azure, finish env convergence, then apply `terraform/shared-ops`.
 
 ## 0.1 Repo QA status
 
@@ -38,17 +43,18 @@ What is still pending because it requires live Azure execution:
 
 - `dev` rollout to the dedicated CAE/runtime VNet target
 - `prod` rollout to the dedicated CAE/runtime VNet target
-- shared runner relocation to `uksouth`
+- shared runner recreation/registration on `Standard_F1als_v7` in `uksouth`
 - shared-ops `apply`
 - health/readiness validation after each environment cutover
 - runner private DNS validation after Key Vault PE migration
-- Azure Start/Stop VMs off-hours automation deployment
+- optional office-hours automation if you still want non-CD schedule guardrails
 
 ## 1) Automation baseline
 
 - `CI` workflow (`.github/workflows/ci.yml`) runs on PRs to `main`.
 - `CI Push` workflow (`.github/workflows/ci-push.yml`) runs on `push` to `main` and publishes immutable `sha-<short_sha>` image tags.
 - `CD` workflow (`.github/workflows/cd.yml`) remains manual (`workflow_dispatch`) and keeps digest promotion for prod.
+- CD now uses hosted jobs to start the shared runner VM before Terraform and deallocate it after every run.
 - Terraform jobs in CD run on self-hosted runner labels:
   - `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`
 - CD enforces preflight before `plan/apply`:
@@ -68,7 +74,7 @@ What is still pending because it requires live Azure execution:
 - Shared runner VNet + private DNS zone:
   - DNS zone: `privatelink.vaultcore.azure.net`
   - target shared runner location: `uksouth`
-  - target shared runner VM size: `Standard_B1s`
+  - target shared runner VM size: `Standard_F1als_v7`
 - Steady-state Key Vault posture:
   - `default_action = Deny`
   - `bypass = None`
@@ -79,16 +85,14 @@ Do not reorder these steps:
 
 1. Apply `dev` and validate runtime/private-path health.
 2. Apply `prod` and validate runtime/private-path health.
-3. Relocate the shared runner from `eastus` to `uksouth`.
-4. Apply the shared-ops layer and operationalize the runner office-hours schedule and patch cadence.
+3. Recreate or reconcile the shared runner in `uksouth`, then register it once if needed.
+4. Apply the shared-ops layer and keep the runner schedule metadata aligned with patch/right-sizing operations.
 
 Important nuance:
 
 - The shared runner platform is still owned by the `dev` Terraform state.
-- Because the repo target for `shared_runner_location` is now `uksouth`, a full `dev` apply can include the runner relocation unless you intentionally defer it.
-- If you want to keep the rollout in the exact phase order above, run the pre-relocation `dev` plan/apply with a temporary override:
-  - `-var="shared_runner_location=eastus"`
-- Then run the dedicated runner-relocation apply later from a trusted local shell without that override.
+- Because the repo target for `shared_runner_location` is now `uksouth`, the first `dev` apply that reconciles the runner should be done from a trusted local shell or break-glass hosted path, not from CD.
+- After that one-time recreate/register step, the CD workflow becomes the normal on-demand start/deallocate path.
 
 ## 1.3 Why `terraform/shared-ops` exists
 
@@ -98,7 +102,7 @@ The env root under `terraform/` still manages environment-bound infrastructure s
 
 - monthly subscription budget
 - budget notification contacts
-- runner office-hours metadata
+- runner schedule metadata
 - runner patch/right-sizing metadata
 
 This split keeps shared operational controls in their own Terraform state so that:
@@ -151,23 +155,23 @@ Bootstrap note:
 - Before the first full `dev` plan/apply, ensure `dev-db-password` already exists.
 - Before the first full `prod` plan/apply, ensure `prod-db-password` already exists.
 - For local Terraform `plan/apply`, always pass explicit `-var="container_image_tag=sha-<short_sha>"`.
-- The new budget runner bootstrap now adds a `2 GiB` swap file; that safeguard takes effect when the runner VM is recreated or relocated.
+- The budget runner bootstrap now adds a `2 GiB` swap file; that safeguard takes effect when the runner VM is recreated or relocated.
+- After the runner is registered once, CD starts it only when needed and deallocates it automatically after each run.
 
 1. Merge to `main` and capture `image_tag` from the `CI Push` summary.
-2. Run `dev` `plan` and `apply` with that image tag.
-3. Validate `dev` `/health` and `/ready`.
-4. From the runner path, confirm private DNS resolution for `taskapi-dev-kv-uks`.
+2. From a trusted local shell, run the `dev` reconciliation that recreates the shared runner in `uksouth` on `Standard_F1als_v7`.
+3. Register the GitHub runner once if the VM was recreated.
+4. Validate `dev` `/health` and `/ready`.
 5. Run `prod` `plan` and `apply` with the same image tag.
 6. Validate `prod` `/health` and `/ready`.
-7. From a non-self-hosted path, relocate the shared runner to `uksouth`.
-8. Apply the shared-ops layer:
+7. Apply the shared-ops layer:
 
 ```bash
 terraform -chdir=terraform/shared-ops init -backend-config=backend/shared.hcl -reconfigure
 terraform -chdir=terraform/shared-ops apply -var-file=vars/shared.tfvars
 ```
 
-9. Deploy Azure Start/Stop VMs during off-hours using the metadata in `terraform/shared-ops/vars/shared.tfvars`.
+8. Optionally deploy office-hours automation if you want a separate non-CD schedule guardrail.
 
 ## 3.1 Exact next steps to make the rollout work
 
@@ -176,19 +180,18 @@ Use this checklist in order:
 1. Ensure `TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY` is present in both GitHub environments.
 2. Ensure `dev-db-password` and `prod-db-password` exist in their dedicated Key Vaults.
 3. Merge the repo state to `main` and capture the immutable `sha-<short_sha>` image tag from `CI Push`.
-4. From a trusted local shell, run `dev` `plan`, then `dev` `apply`, using a temporary `-var="shared_runner_location=eastus"` override if you want to postpone the runner move until the dedicated relocation step.
+4. From a trusted local shell, run `dev` `plan`, then `dev` `apply`, so the shared runner lands in `uksouth` on `Standard_F1als_v7`.
 5. Validate `dev`:
    - `GET /health` returns `200`
    - `GET /ready` returns `200`
-   - preflight passes with `--strict-runner`
    - Key Vault resolves privately from the runner path
-6. Run `prod` `plan`, then `prod` `apply`, using the same image tag.
-7. Validate `prod` with the same checks.
-8. From a non-self-hosted path, relocate the shared runner so the new `Standard_B1s` VM lands in `uksouth`.
-9. Re-register the GitHub runner if needed and confirm labels:
+6. Re-register the GitHub runner if the VM was recreated and confirm labels:
    - `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`
+7. Re-run preflight with `--strict-runner`.
+8. Run `prod` `plan`, then `prod` `apply`, using the same image tag.
+9. Validate `prod` with the same checks.
 10. Apply `terraform/shared-ops`.
-11. Deploy Azure Start/Stop VMs off-hours automation using the schedule values from `terraform/shared-ops/vars/shared.tfvars`.
+11. Optionally deploy office-hours automation using the schedule values from `terraform/shared-ops/vars/shared.tfvars`.
 12. Record the first patch window and the first monthly Azure Advisor right-sizing review.
 
 ## 4) Mandatory preflight checks
@@ -256,6 +259,7 @@ Do not destroy dedicated Key Vaults during rollback.
 - Maintain the following cadence:
   - quarterly access review
   - 90-day DB password rotation
-  - runner office-hours schedule review
+  - runner schedule review
   - weekly Wednesday `22:00` `Europe/Paris` patch window
+  - confirm the shared runner is deallocated after normal CD runs
   - monthly Azure Advisor runner right-sizing review
