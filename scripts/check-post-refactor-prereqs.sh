@@ -75,6 +75,10 @@ Options:
   --skip-github-runner-readiness Skip GitHub-side runner registration/online check
   -h, --help                     Show this help
 
+Environment requirements:
+  - Azure CLI must already be authenticated (`az login`)
+  - Set `ARM_CLIENT_ID` or `AZURE_CLIENT_ID` so deploy-identity RBAC can be validated
+
 Read-only checks:
   1) Terraform intent for target env (dedicated KV + dedicated CAE + approved network mode + private endpoint)
   2) Key Vault existence, network posture, and DB secret contract
@@ -318,7 +322,7 @@ check_deploy_identity_role() {
   local assignment_count
 
   if [[ -z "${deploy_client_id}" ]]; then
-    warn "Deploy identity client id is empty (set ARM_CLIENT_ID or AZURE_CLIENT_ID to validate deploy identity RBAC)"
+    fail "Deploy identity client id is empty (set ARM_CLIENT_ID or AZURE_CLIENT_ID to validate deploy identity RBAC)"
     return
   fi
 

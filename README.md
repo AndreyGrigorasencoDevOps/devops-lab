@@ -238,3 +238,5 @@ The Terraform deploy identity must have `Key Vault Secrets Officer` on the Key V
 - `npm run test:coverage`
 - `./scripts/check-local-dev-prereqs.sh`
 - `./scripts/check-post-refactor-prereqs.sh`
+
+When running `./scripts/check-post-refactor-prereqs.sh` manually, export `ARM_CLIENT_ID` or `AZURE_CLIENT_ID` first so the deploy-identity Key Vault RBAC check is enforced.

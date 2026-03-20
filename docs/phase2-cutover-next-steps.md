@@ -258,7 +258,7 @@ Use the same immutable image tag that will be deployed:
 IMAGE_TAG="sha-<short_sha>"
 ```
 
-Optional: export deploy client id to validate deploy RBAC without warning noise in local preflight:
+Required for local preflight: export deploy client id so deploy RBAC is validated as a blocking check:
 
 ```bash
 export AZURE_CLIENT_ID="<prod_github_oidc_app_client_id>"
