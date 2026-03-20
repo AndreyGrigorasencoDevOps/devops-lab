@@ -32,7 +32,7 @@ function resolveSslConfig(env = process.env) {
     const normalizedMode = sslMode.trim().toLowerCase();
 
     if (["disable", "false", "0", "no", "off"].includes(normalizedMode)) {
-      return undefined;
+      return false;
     }
 
     if (["require", "verify-ca", "verify-full", "true", "1", "yes", "on"].includes(normalizedMode)) {
@@ -64,7 +64,7 @@ function createPool(env = process.env) {
   };
   const ssl = resolveSslConfig(env);
 
-  if (ssl) {
+  if (ssl !== undefined) {
     poolConfig.ssl = ssl;
   }
 

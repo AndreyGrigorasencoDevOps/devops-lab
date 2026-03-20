@@ -296,8 +296,11 @@ test('db config: createPool enables TLS automatically for Azure PostgreSQL hosts
   }
 })
 
-test('db config: explicit DB_SSL=disable overrides automatic Azure TLS', () => {
+test('db config: explicit DB_SSL=disable overrides automatic Azure TLS and PGSSLMODE fallback', () => {
   const ctx = loadDbModule()
+  const previousPgSslMode = process.env.PGSSLMODE
+
+  process.env.PGSSLMODE = 'require'
 
   try {
     ctx.db.createPool({
@@ -314,8 +317,14 @@ test('db config: explicit DB_SSL=disable overrides automatic Azure TLS', () => {
       password: 'secret',
       database: 'taskdb',
       port: 5432,
+      ssl: false,
     })
   } finally {
+    if (previousPgSslMode === undefined) {
+      delete process.env.PGSSLMODE
+    } else {
+      process.env.PGSSLMODE = previousPgSslMode
+    }
     ctx.restore()
   }
 })
