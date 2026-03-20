@@ -32,6 +32,7 @@
     "supertest": "^7.2.2"
   },
   "overrides": {
+    "flatted": "3.4.2",
     "minimatch": ">=10.2.4"
   }
 }
