@@ -203,7 +203,7 @@ jobs:
         always() &&
         needs.validate-inputs.result == 'success' &&
         (
-          inputs.environment == 'dev' ||
+          (inputs.environment == 'dev' && inputs.action != 'destroy') ||
           (inputs.environment == 'prod' && inputs.action != 'destroy' && needs.promote-prod-image.result == 'success') ||
           (inputs.environment == 'prod' && inputs.action == 'destroy' && needs.prod-destroy-approval-gate.result == 'success')
         )
@@ -315,11 +315,12 @@ jobs:
           exit 1
 
   terraform-dev:
-    name: Terraform dev
+    name: Terraform dev (plan/apply)
     if: >-
       ${{
         !cancelled() &&
         inputs.environment == 'dev' &&
+        inputs.action != 'destroy' &&
         needs.prepare-self-hosted-runner.result == 'success'
       }}
     needs: [prepare-self-hosted-runner]
@@ -447,6 +448,64 @@ jobs:
               exit 1
               ;;
           esac
+
+  terraform-dev-destroy:
+    name: Terraform dev (destroy)
+    if: >-
+      ${{
+        !cancelled() &&
+        inputs.environment == 'dev' &&
+        inputs.action == 'destroy' &&
+        needs.validate-inputs.result == 'success'
+      }}
+    needs: [validate-inputs]
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
+      RBAC_PROPAGATION_WAIT_SECONDS: "45"
+      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Export Terraform variables
+        run: |
+          set -euo pipefail
+          echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
+
+          if [[ -n "$APP_ENV_VARS_JSON" ]]; then
+            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
+          fi
+
+          if [[ -n "$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" ]]; then
+            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
+          fi
+
+      - name: Terraform init
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
+
+      - name: Terraform destroy (dev)
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/dev.tfvars -auto-approve
 
   terraform-prod:
     name: Terraform prod (plan/apply)
@@ -636,7 +695,7 @@ jobs:
 
   cleanup-self-hosted-runner:
     name: Deallocate shared self-hosted runner
-    needs: [prepare-self-hosted-runner, terraform-dev, terraform-prod, terraform-prod-destroy]
+    needs: [prepare-self-hosted-runner, terraform-dev, terraform-dev-destroy, terraform-prod, terraform-prod-destroy]
     if: >-
       ${{
         always() &&
