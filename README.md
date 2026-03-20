@@ -173,9 +173,10 @@ Behavior:
 
 - Terraform is the deployment engine for both environments.
 - For `prod` plan/apply, the workflow promotes the image from DEV ACR to PROD ACR by digest before Terraform.
-- Terraform jobs run on self-hosted runner labels: `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`.
+- Terraform `plan` and `apply` jobs run on self-hosted runner labels: `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`.
 - Preflight security check is mandatory before `plan/apply`.
 - `destroy` is available for both `dev` and `prod` (manual use only).
+- `destroy` runs as a GitHub-hosted break-glass path and temporarily allowlists the runner public IP on Key Vault during the teardown window.
 - Normal release flow is `plan` then `apply` (reconciliation).
 - `destroy` is full state teardown for the selected environment, not selective cleanup.
 

@@ -204,8 +204,7 @@ jobs:
         needs.validate-inputs.result == 'success' &&
         (
           (inputs.environment == 'dev' && inputs.action != 'destroy') ||
-          (inputs.environment == 'prod' && inputs.action != 'destroy' && needs.promote-prod-image.result == 'success') ||
-          (inputs.environment == 'prod' && inputs.action == 'destroy' && needs.prod-destroy-approval-gate.result == 'success')
+          (inputs.environment == 'prod' && inputs.action != 'destroy' && needs.promote-prod-image.result == 'success')
         )
       }}
     runs-on: ubuntu-latest
@@ -504,8 +503,107 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
 
+      - name: Resolve break-glass Key Vault access (dev)
+        run: |
+          set -euo pipefail
+
+          extract_tfvar_string() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" "${file}" | head -n 1
+          }
+
+          extract_tfvar_bool() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\(true\|false\).*/\1/p" "${file}" | head -n 1
+          }
+
+          TFVARS_FILE="${{ env.TERRAFORM_DIR }}/vars/dev.tfvars"
+          PROJECT_NAME="$(sed -n '/variable "project"/,/}/s/.*default[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p' "${{ env.TERRAFORM_DIR }}/variables.tf" | head -n 1)"
+          ENV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "env")"
+          USE_SHARED_KEY_VAULT="$(extract_tfvar_bool "${TFVARS_FILE}" "use_shared_key_vault")"
+
+          if [[ -z "${ENV_NAME}" ]]; then
+            ENV_NAME="dev"
+          fi
+
+          if [[ "${USE_SHARED_KEY_VAULT}" == "true" ]]; then
+            KV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "shared_key_vault_name")"
+            KV_RG="$(extract_tfvar_string "${TFVARS_FILE}" "shared_key_vault_resource_group_name")"
+          else
+            KV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "key_vault_name")"
+            if [[ -z "${KV_NAME}" ]]; then
+              KV_NAME="${PROJECT_NAME}-${ENV_NAME}-kv-uks"
+            fi
+            KV_RG="${PROJECT_NAME}-${ENV_NAME}-rg-uks"
+          fi
+
+          if [[ -z "${KV_NAME}" || -z "${KV_RG}" ]]; then
+            echo "::error::Unable to resolve Key Vault name/resource group for hosted destroy."
+            exit 1
+          fi
+
+          RUNNER_PUBLIC_IP="$(curl -fsS https://api.ipify.org)"
+          PREEXISTING_RULE_COUNT="$(
+            az keyvault network-rule list \
+              --name "${KV_NAME}" \
+              --resource-group "${KV_RG}" \
+              --query "ipRules[?value=='${RUNNER_PUBLIC_IP}'] | length(@)" \
+              -o tsv
+          )"
+
+          echo "BREAK_GLASS_KEY_VAULT_NAME=${KV_NAME}" >> "$GITHUB_ENV"
+          echo "BREAK_GLASS_KEY_VAULT_RG=${KV_RG}" >> "$GITHUB_ENV"
+          echo "RUNNER_PUBLIC_IP=${RUNNER_PUBLIC_IP}" >> "$GITHUB_ENV"
+
+          if [[ "${PREEXISTING_RULE_COUNT}" == "1" ]]; then
+            echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=true" >> "$GITHUB_ENV"
+          else
+            echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Temporarily allow hosted runner IP to access Key Vault (dev)
+        run: |
+          set -euo pipefail
+
+          if [[ "${BREAK_GLASS_ALLOWLIST_PREEXISTING:-false}" == "true" ]]; then
+            echo "Hosted runner IP is already allowlisted on Key Vault."
+            exit 0
+          fi
+
+          az keyvault network-rule add \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --ip-address "${RUNNER_PUBLIC_IP}" >/dev/null
+          echo "BREAK_GLASS_ALLOWLIST_ADDED=true" >> "$GITHUB_ENV"
+          sleep 10
+
       - name: Terraform destroy (dev)
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/dev.tfvars -auto-approve
+
+      - name: Remove hosted runner IP from Key Vault (dev)
+        if: always()
+        run: |
+          set -euo pipefail
+
+          if [[ "${BREAK_GLASS_ALLOWLIST_ADDED:-false}" != "true" ]]; then
+            echo "No temporary Key Vault allowlist was added."
+            exit 0
+          fi
+
+          if ! az keyvault show \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --query id -o tsv >/dev/null 2>&1; then
+            echo "Key Vault already removed; no firewall cleanup required."
+            exit 0
+          fi
+
+          az keyvault network-rule remove \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --ip-address "${RUNNER_PUBLIC_IP}" >/dev/null || true
 
   terraform-prod:
     name: Terraform prod (plan/apply)
@@ -642,13 +740,13 @@ jobs:
         !cancelled() &&
         inputs.environment == 'prod' &&
         inputs.action == 'destroy' &&
-        needs.prepare-self-hosted-runner.result == 'success'
+        needs.validate-inputs.result == 'success' &&
+        needs.prod-destroy-approval-gate.result == 'success'
       }}
-    needs: [prepare-self-hosted-runner]
-    runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
+    needs: [validate-inputs, prod-destroy-approval-gate]
+    runs-on: ubuntu-latest
     environment: prod
     permissions:
-      actions: read
       contents: read
       id-token: write
     env:
@@ -690,8 +788,107 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
 
+      - name: Resolve break-glass Key Vault access (prod)
+        run: |
+          set -euo pipefail
+
+          extract_tfvar_string() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" "${file}" | head -n 1
+          }
+
+          extract_tfvar_bool() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\(true\|false\).*/\1/p" "${file}" | head -n 1
+          }
+
+          TFVARS_FILE="${{ env.TERRAFORM_DIR }}/vars/prod.tfvars"
+          PROJECT_NAME="$(sed -n '/variable "project"/,/}/s/.*default[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p' "${{ env.TERRAFORM_DIR }}/variables.tf" | head -n 1)"
+          ENV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "env")"
+          USE_SHARED_KEY_VAULT="$(extract_tfvar_bool "${TFVARS_FILE}" "use_shared_key_vault")"
+
+          if [[ -z "${ENV_NAME}" ]]; then
+            ENV_NAME="prod"
+          fi
+
+          if [[ "${USE_SHARED_KEY_VAULT}" == "true" ]]; then
+            KV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "shared_key_vault_name")"
+            KV_RG="$(extract_tfvar_string "${TFVARS_FILE}" "shared_key_vault_resource_group_name")"
+          else
+            KV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "key_vault_name")"
+            if [[ -z "${KV_NAME}" ]]; then
+              KV_NAME="${PROJECT_NAME}-${ENV_NAME}-kv-uks"
+            fi
+            KV_RG="${PROJECT_NAME}-${ENV_NAME}-rg-uks"
+          fi
+
+          if [[ -z "${KV_NAME}" || -z "${KV_RG}" ]]; then
+            echo "::error::Unable to resolve Key Vault name/resource group for hosted destroy."
+            exit 1
+          fi
+
+          RUNNER_PUBLIC_IP="$(curl -fsS https://api.ipify.org)"
+          PREEXISTING_RULE_COUNT="$(
+            az keyvault network-rule list \
+              --name "${KV_NAME}" \
+              --resource-group "${KV_RG}" \
+              --query "ipRules[?value=='${RUNNER_PUBLIC_IP}'] | length(@)" \
+              -o tsv
+          )"
+
+          echo "BREAK_GLASS_KEY_VAULT_NAME=${KV_NAME}" >> "$GITHUB_ENV"
+          echo "BREAK_GLASS_KEY_VAULT_RG=${KV_RG}" >> "$GITHUB_ENV"
+          echo "RUNNER_PUBLIC_IP=${RUNNER_PUBLIC_IP}" >> "$GITHUB_ENV"
+
+          if [[ "${PREEXISTING_RULE_COUNT}" == "1" ]]; then
+            echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=true" >> "$GITHUB_ENV"
+          else
+            echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Temporarily allow hosted runner IP to access Key Vault (prod)
+        run: |
+          set -euo pipefail
+
+          if [[ "${BREAK_GLASS_ALLOWLIST_PREEXISTING:-false}" == "true" ]]; then
+            echo "Hosted runner IP is already allowlisted on Key Vault."
+            exit 0
+          fi
+
+          az keyvault network-rule add \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --ip-address "${RUNNER_PUBLIC_IP}" >/dev/null
+          echo "BREAK_GLASS_ALLOWLIST_ADDED=true" >> "$GITHUB_ENV"
+          sleep 10
+
       - name: Terraform destroy (prod)
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/prod.tfvars -auto-approve
+
+      - name: Remove hosted runner IP from Key Vault (prod)
+        if: always()
+        run: |
+          set -euo pipefail
+
+          if [[ "${BREAK_GLASS_ALLOWLIST_ADDED:-false}" != "true" ]]; then
+            echo "No temporary Key Vault allowlist was added."
+            exit 0
+          fi
+
+          if ! az keyvault show \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --query id -o tsv >/dev/null 2>&1; then
+            echo "Key Vault already removed; no firewall cleanup required."
+            exit 0
+          fi
+
+          az keyvault network-rule remove \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --ip-address "${RUNNER_PUBLIC_IP}" >/dev/null || true
 
   cleanup-self-hosted-runner:
     name: Deallocate shared self-hosted runner
