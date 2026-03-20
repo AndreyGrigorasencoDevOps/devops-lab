@@ -145,6 +145,9 @@ Steady-state target:
 - CD receives `image_tag` and runs Terraform `plan|apply|destroy`.
 - PROD promotes the image from DEV ACR to PROD ACR by digest before Terraform.
 - Preflight is mandatory before `plan/apply`.
+- `cd.yml` also exposes an opt-in `bootstrap_mode=true` for first-apply recovery/bootstrap of Terraform-managed env prerequisites.
+  It pre-creates the env Key Vault/private endpoint, dedicated CAE path, and runtime identity RBAC before the normal preflight.
+  It does not create the shared runner path, and it does not seed the manual `<env>-db-password` secret for you.
 
 ## Notes
 
