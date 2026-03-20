@@ -198,8 +198,8 @@ terraform -chdir=terraform plan -var-file=vars/dev.tfvars -var="container_image_
 ### Repository-level GitHub Actions secrets
 
 - `GH_RUNNER_ADMIN_TOKEN`
-  - Required for CD to query repository self-hosted runners while booting the shared Azure runner VM.
-  - Use a fine-grained PAT or GitHub App token with repository `Administration: Read`.
+  - Required only for the hosted runner-prep step that queries repository self-hosted runners while booting the shared Azure runner VM.
+  - Use a fine-grained PAT with repository `Administration: Read`.
 
 ### GitHub environment variables (`dev` and `prod`)
 
