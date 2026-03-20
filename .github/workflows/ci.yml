@@ -111,7 +111,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.26.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.33.1
         with:
           version: latest
           scan-type: fs
@@ -122,7 +122,7 @@ jobs:
           format: table
 
       - name: Trivy config scan
-        uses: aquasecurity/trivy-action@0.26.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.33.1
         with:
           version: latest
           scan-type: config
