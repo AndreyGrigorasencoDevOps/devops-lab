@@ -295,7 +295,7 @@ jobs:
     name: Terraform dev
     if: >-
       ${{
-        always() &&
+        !cancelled() &&
         inputs.environment == 'dev' &&
         needs.prepare-self-hosted-runner.result == 'success'
       }}
@@ -419,7 +419,7 @@ jobs:
     name: Terraform prod (plan/apply)
     if: >-
       ${{
-        always() &&
+        !cancelled() &&
         inputs.environment == 'prod' &&
         inputs.action != 'destroy' &&
         needs.prepare-self-hosted-runner.result == 'success'
@@ -537,7 +537,7 @@ jobs:
     name: Terraform prod (destroy)
     if: >-
       ${{
-        always() &&
+        !cancelled() &&
         inputs.environment == 'prod' &&
         inputs.action == 'destroy' &&
         needs.prepare-self-hosted-runner.result == 'success'
