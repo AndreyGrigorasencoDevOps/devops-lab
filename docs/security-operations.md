@@ -49,6 +49,8 @@ Quarterly review checklist:
 ./scripts/check-post-refactor-prereqs.sh --environment <dev|prod> --strict-runner
 ```
 
+For manual/local runs, export `ARM_CLIENT_ID` or `AZURE_CLIENT_ID` first. The script now fails if the deploy identity client ID is missing because deploy-identity Key Vault RBAC is part of the blocking gate.
+
 The gate now verifies:
 
 - dedicated env Key Vault model (`use_shared_key_vault=false`)

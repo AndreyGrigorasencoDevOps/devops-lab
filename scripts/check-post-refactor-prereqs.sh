@@ -8,6 +8,7 @@ REPO="${GITHUB_REPOSITORY:-}"
 PROJECT_NAME=""
 TARGET_ENV="dev"
 STRICT_RUNNER=false
+CHECK_GITHUB_RUNNER_READINESS=true
 
 DEV_KV_NAME=""
 PROD_KV_NAME=""
@@ -71,7 +72,12 @@ Options:
   --runner-dns-zone <name>       Override shared private DNS zone name
   --runner-vm <name>             Override shared runner VM name
   --strict-runner                Fail when runner readiness checks fail
+  --skip-github-runner-readiness Skip GitHub-side runner registration/online check
   -h, --help                     Show this help
+
+Environment requirements:
+  - Azure CLI must already be authenticated (`az login`)
+  - Set `ARM_CLIENT_ID` or `AZURE_CLIENT_ID` so deploy-identity RBAC can be validated
 
 Read-only checks:
   1) Terraform intent for target env (dedicated KV + dedicated CAE + approved network mode + private endpoint)
@@ -316,7 +322,7 @@ check_deploy_identity_role() {
   local assignment_count
 
   if [[ -z "${deploy_client_id}" ]]; then
-    warn "Deploy identity client id is empty (set ARM_CLIENT_ID or AZURE_CLIENT_ID to validate deploy identity RBAC)"
+    fail "Deploy identity client id is empty (set ARM_CLIENT_ID or AZURE_CLIENT_ID to validate deploy identity RBAC)"
     return
   fi
 
@@ -334,9 +340,15 @@ check_deploy_identity_role() {
 }
 
 check_github_runner_readiness() {
+  local api_output
   local matching_count
   local online_count
   local api_error
+
+  if [[ "${CHECK_GITHUB_RUNNER_READINESS}" != "true" ]]; then
+    pass "Skipping GitHub-side runner readiness check by request"
+    return
+  fi
 
   if ! command -v gh >/dev/null 2>&1; then
     if [[ "${STRICT_RUNNER}" == "true" ]]; then
@@ -362,7 +374,7 @@ check_github_runner_readiness() {
   fi
 
   api_error=""
-  matching_count="$(gh api "/repos/${REPO}/actions/runners" --jq '[.runners[] | select((.labels | map(.name) | index("taskapi-cd")) and (.labels | map(.name) | index("vnet")))] | length' 2>/tmp/cd_preflight_gh_err.log || true)"
+  api_output="$(gh api --paginate "/repos/${REPO}/actions/runners?per_page=100" 2>/tmp/cd_preflight_gh_err.log || true)"
   if [[ -s /tmp/cd_preflight_gh_err.log ]]; then
     api_error="$(cat /tmp/cd_preflight_gh_err.log)"
     rm -f /tmp/cd_preflight_gh_err.log
@@ -377,7 +389,25 @@ check_github_runner_readiness() {
     return
   fi
 
-  online_count="$(gh api "/repos/${REPO}/actions/runners" --jq '[.runners[] | select((.labels | map(.name) | index("taskapi-cd")) and (.labels | map(.name) | index("vnet")) and .status == "online")] | length' 2>/dev/null || echo "0")"
+  matching_count="$(
+    printf '%s' "${api_output}" |
+    jq -s -r '
+      [
+        .[].runners[]
+        | select((.labels | map(.name) | index("taskapi-cd")) and (.labels | map(.name) | index("vnet")))
+      ] | length
+    '
+  )"
+
+  online_count="$(
+    printf '%s' "${api_output}" |
+    jq -s -r '
+      [
+        .[].runners[]
+        | select((.labels | map(.name) | index("taskapi-cd")) and (.labels | map(.name) | index("vnet")) and .status == "online")
+      ] | length
+    '
+  )"
 
   if [[ "${matching_count}" =~ ^[0-9]+$ ]] && [[ "${matching_count}" -ge 1 ]]; then
     pass "Found ${matching_count} self-hosted runner(s) with labels taskapi-cd,vnet"
@@ -686,6 +716,10 @@ while [[ $# -gt 0 ]]; do
       STRICT_RUNNER=true
       shift
       ;;
+    --skip-github-runner-readiness)
+      CHECK_GITHUB_RUNNER_READINESS=false
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -734,6 +768,7 @@ printf 'Runner PE subnet: %s\n' "${RUNNER_PE_SUBNET_NAME:-n/a}"
 printf 'Runner DNS zone: %s\n' "${RUNNER_DNS_ZONE_NAME:-n/a}"
 printf 'Runner expected location: %s\n' "${RUNNER_EXPECTED_LOCATION:-n/a}"
 printf 'Strict runner mode: %s\n' "${STRICT_RUNNER}"
+printf 'GitHub runner readiness check: %s\n' "${CHECK_GITHUB_RUNNER_READINESS}"
 printf '\n'
 
 check_github_runner_readiness

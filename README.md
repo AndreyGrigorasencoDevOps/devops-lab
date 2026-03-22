@@ -173,9 +173,10 @@ Behavior:
 
 - Terraform is the deployment engine for both environments.
 - For `prod` plan/apply, the workflow promotes the image from DEV ACR to PROD ACR by digest before Terraform.
-- Terraform jobs run on self-hosted runner labels: `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`.
+- Terraform `plan` and `apply` jobs run on self-hosted runner labels: `self-hosted`, `linux`, `x64`, `taskapi-cd`, `vnet`.
 - Preflight security check is mandatory before `plan/apply`.
 - `destroy` is available for both `dev` and `prod` (manual use only).
+- `destroy` runs as a GitHub-hosted break-glass path and temporarily allowlists the runner public IP on Key Vault during the teardown window.
 - Normal release flow is `plan` then `apply` (reconciliation).
 - `destroy` is full state teardown for the selected environment, not selective cleanup.
 
@@ -198,8 +199,8 @@ terraform -chdir=terraform plan -var-file=vars/dev.tfvars -var="container_image_
 ### Repository-level GitHub Actions secrets
 
 - `GH_RUNNER_ADMIN_TOKEN`
-  - Required for CD to query repository self-hosted runners while booting the shared Azure runner VM.
-  - Use a fine-grained PAT or GitHub App token with repository `Administration: Read`.
+  - Required only for the hosted runner-prep step that queries repository self-hosted runners while booting the shared Azure runner VM.
+  - Use a fine-grained PAT with repository `Administration: Read`.
 
 ### GitHub environment variables (`dev` and `prod`)
 
@@ -237,3 +238,5 @@ The Terraform deploy identity must have `Key Vault Secrets Officer` on the Key V
 - `npm run test:coverage`
 - `./scripts/check-local-dev-prereqs.sh`
 - `./scripts/check-post-refactor-prereqs.sh`
+
+When running `./scripts/check-post-refactor-prereqs.sh` manually, export `ARM_CLIENT_ID` or `AZURE_CLIENT_ID` first so the deploy-identity Key Vault RBAC check is enforced.

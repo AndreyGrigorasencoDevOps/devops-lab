@@ -4,6 +4,8 @@ const { Pool } = require("pg");
 const logger = require("../utils/logger");
 
 const AZURE_POSTGRES_HOST_SUFFIX = ".postgres.database.azure.com";
+const SSL_DISABLED_MODES = ["disable", "false", "0", "no", "off"];
+const SSL_ENABLED_MODES = ["require", "verify-ca", "verify-full", "true", "1", "yes", "on"];
 
 function resolveRejectUnauthorized(env, defaultValue) {
   const rawValue = env.DB_SSL_REJECT_UNAUTHORIZED;
@@ -31,12 +33,13 @@ function resolveSslConfig(env = process.env) {
   if (typeof sslMode === "string") {
     const normalizedMode = sslMode.trim().toLowerCase();
 
-    if (["disable", "false", "0", "no", "off"].includes(normalizedMode)) {
-      return undefined;
+    if (SSL_DISABLED_MODES.includes(normalizedMode)) {
+      return { mode: "disabled" };
     }
 
-    if (["require", "verify-ca", "verify-full", "true", "1", "yes", "on"].includes(normalizedMode)) {
+    if (SSL_ENABLED_MODES.includes(normalizedMode)) {
       return {
+        mode: "enabled",
         rejectUnauthorized: resolveRejectUnauthorized(
           env,
           normalizedMode === "verify-ca" || normalizedMode === "verify-full"
@@ -47,11 +50,12 @@ function resolveSslConfig(env = process.env) {
 
   if (typeof env.DB_HOST === "string" && env.DB_HOST.endsWith(AZURE_POSTGRES_HOST_SUFFIX)) {
     return {
+      mode: "enabled",
       rejectUnauthorized: resolveRejectUnauthorized(env, false),
     };
   }
 
-  return undefined;
+  return { mode: "inherit" };
 }
 
 function createPool(env = process.env) {
@@ -64,8 +68,12 @@ function createPool(env = process.env) {
   };
   const ssl = resolveSslConfig(env);
 
-  if (ssl) {
-    poolConfig.ssl = ssl;
+  if (ssl.mode === "disabled") {
+    poolConfig.ssl = false;
+  } else if (ssl.mode === "enabled") {
+    poolConfig.ssl = {
+      rejectUnauthorized: ssl.rejectUnauthorized,
+    };
   }
 
   const pool = new Pool(poolConfig);

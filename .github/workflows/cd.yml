@@ -24,6 +24,11 @@ on:
         description: "Immutable image tag from CI (example: sha-abc1234). Required for plan/apply."
         required: false
         type: string
+      bootstrap_mode:
+        description: "Opt-in first-apply bootstrap for Terraform-managed env prerequisites. Still requires the shared runner path and the manual <env>-db-password secret."
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: cd-shared-runner
@@ -53,6 +58,14 @@ jobs:
             exit 1
           fi
 
+      - name: Validate bootstrap_mode constraints
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.bootstrap_mode }}" == "true" && "${{ inputs.action }}" != "apply" ]]; then
+            echo "::error::bootstrap_mode is only supported with action 'apply'."
+            exit 1
+          fi
+
       - name: Publish CD execution summary
         run: |
           set -euo pipefail
@@ -75,11 +88,17 @@ jobs:
           echo "| Environment | \`${{ inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Terraform action | \`${{ inputs.action }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image tag | \`$IMAGE_TAG\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Bootstrap mode | \`${{ inputs.bootstrap_mode }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Backend config | \`$BACKEND_FILE\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Var file | \`$VAR_FILE\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [[ "${{ inputs.environment }}" == "prod" && "${{ inputs.action }}" != "destroy" ]]; then
             echo "This run will promote image by digest from DEV ACR to PROD ACR before Terraform." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ "${{ inputs.bootstrap_mode }}" == "true" ]]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Bootstrap mode will pre-create Terraform-managed env prerequisites before the normal preflight." >> "$GITHUB_STEP_SUMMARY"
+            echo "Shared runner infrastructure must already exist, and \`${{ inputs.environment }}-db-password\` still must be present in the env Key Vault." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   resolve-prod-source:
@@ -184,9 +203,8 @@ jobs:
         always() &&
         needs.validate-inputs.result == 'success' &&
         (
-          inputs.environment == 'dev' ||
-          (inputs.environment == 'prod' && inputs.action != 'destroy' && needs.promote-prod-image.result == 'success') ||
-          (inputs.environment == 'prod' && inputs.action == 'destroy' && needs.prod-destroy-approval-gate.result == 'success')
+          (inputs.environment == 'dev' && inputs.action != 'destroy') ||
+          (inputs.environment == 'prod' && inputs.action != 'destroy' && needs.promote-prod-image.result == 'success')
         )
       }}
     runs-on: ubuntu-latest
@@ -251,7 +269,7 @@ jobs:
           set -euo pipefail
 
           if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error::Missing repository secret GH_RUNNER_ADMIN_TOKEN. Use a fine-grained PAT or GitHub App token with repository Administration: read so CD can inspect self-hosted runner status."
+            echo "::error::Missing repository secret GH_RUNNER_ADMIN_TOKEN. Use a fine-grained PAT with repository Administration: read so CD can inspect self-hosted runner status."
             exit 1
           fi
 
@@ -260,20 +278,24 @@ jobs:
 
           for attempt in $(seq 1 "$max_attempts"); do
             api_output=""
-            if ! api_output="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runners?per_page=100" 2>&1)"; then
-              if printf '%s' "${api_output}" | grep -qiE 'HTTP 403|forbidden|Resource not accessible by integration'; then
+            api_error_file="$(mktemp)"
+            if ! api_output="$(gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runners?per_page=100" 2>"${api_error_file}")"; then
+              api_error="$(cat "${api_error_file}")"
+              rm -f "${api_error_file}"
+              if printf '%s' "${api_error}" | grep -qiE 'HTTP 403|forbidden|Resource not accessible by integration'; then
                 echo "::error::GH_RUNNER_ADMIN_TOKEN cannot read repository self-hosted runners. The token must have repository Administration: read."
               else
-                echo "::error::Unable to query repository self-hosted runners: ${api_output}"
+                echo "::error::Unable to query repository self-hosted runners: ${api_error}"
               fi
               exit 1
             fi
+            rm -f "${api_error_file}"
 
             online_runner_count="$(
               printf '%s' "${api_output}" |
-              jq -r --argjson required "${required_labels_json}" '
+              jq -s -r --argjson required "${required_labels_json}" '
                 [
-                  .runners[]
+                  .[].runners[]
                   | select(.status == "online")
                   | select((( $required - (.labels | map(.name)) ) | length) == 0)
                 ] | length
@@ -292,11 +314,12 @@ jobs:
           exit 1
 
   terraform-dev:
-    name: Terraform dev
+    name: Terraform dev (plan/apply)
     if: >-
       ${{
         !cancelled() &&
         inputs.environment == 'dev' &&
+        inputs.action != 'destroy' &&
         needs.prepare-self-hosted-runner.result == 'success'
       }}
     needs: [prepare-self-hosted-runner]
@@ -347,19 +370,29 @@ jobs:
             echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
           fi
 
+      - name: Terraform init
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
+
+      - name: Bootstrap Terraform-managed env prerequisites (dev)
+        if: inputs.bootstrap_mode == true && inputs.action == 'apply'
+        run: |
+          set -euo pipefail
+          terraform -chdir=${{ env.TERRAFORM_DIR }} apply -var-file=vars/dev.tfvars -auto-approve \
+            -target=azurerm_key_vault.main[0] \
+            -target=azurerm_private_endpoint.key_vault[0] \
+            -target=azurerm_container_app_environment.main[0] \
+            -target=azurerm_user_assigned_identity.container_app \
+            -target=azurerm_role_assignment.key_vault_secrets_user
+
       - name: Preflight security checks (dev)
         if: inputs.action != 'destroy'
-        env:
-          GH_TOKEN: ${{ secrets.GH_RUNNER_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           ./scripts/check-post-refactor-prereqs.sh \
             --environment "dev" \
             --repo "${GITHUB_REPOSITORY}" \
+            --skip-github-runner-readiness \
             --strict-runner
-
-      - name: Terraform init
-        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
 
       - name: Adopt existing Container App into Terraform state (dev)
         if: inputs.action == 'apply'
@@ -415,6 +448,163 @@ jobs:
               ;;
           esac
 
+  terraform-dev-destroy:
+    name: Terraform dev (destroy)
+    if: >-
+      ${{
+        !cancelled() &&
+        inputs.environment == 'dev' &&
+        inputs.action == 'destroy' &&
+        needs.validate-inputs.result == 'success'
+      }}
+    needs: [validate-inputs]
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
+      RBAC_PROPAGATION_WAIT_SECONDS: "45"
+      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Export Terraform variables
+        run: |
+          set -euo pipefail
+          echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
+
+          if [[ -n "$APP_ENV_VARS_JSON" ]]; then
+            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
+          fi
+
+          if [[ -n "$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" ]]; then
+            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
+          fi
+
+      - name: Terraform init
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
+
+      - name: Resolve break-glass Key Vault access (dev)
+        run: |
+          set -euo pipefail
+
+          extract_tfvar_string() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" "${file}" | head -n 1
+          }
+
+          extract_tfvar_bool() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\(true\|false\).*/\1/p" "${file}" | head -n 1
+          }
+
+          TFVARS_FILE="${{ env.TERRAFORM_DIR }}/vars/dev.tfvars"
+          PROJECT_NAME="$(sed -n '/variable "project"/,/}/s/.*default[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p' "${{ env.TERRAFORM_DIR }}/variables.tf" | head -n 1)"
+          ENV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "env")"
+          USE_SHARED_KEY_VAULT="$(extract_tfvar_bool "${TFVARS_FILE}" "use_shared_key_vault")"
+
+          if [[ -z "${ENV_NAME}" ]]; then
+            ENV_NAME="dev"
+          fi
+
+          if [[ "${USE_SHARED_KEY_VAULT}" == "true" ]]; then
+            KV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "shared_key_vault_name")"
+            KV_RG="$(extract_tfvar_string "${TFVARS_FILE}" "shared_key_vault_resource_group_name")"
+          else
+            KV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "key_vault_name")"
+            if [[ -z "${KV_NAME}" ]]; then
+              KV_NAME="${PROJECT_NAME}-${ENV_NAME}-kv-uks"
+            fi
+            KV_RG="${PROJECT_NAME}-${ENV_NAME}-rg-uks"
+          fi
+
+          if [[ -z "${KV_NAME}" || -z "${KV_RG}" ]]; then
+            echo "::error::Unable to resolve Key Vault name/resource group for hosted destroy."
+            exit 1
+          fi
+
+          RUNNER_PUBLIC_IP="$(curl -fsS https://api.ipify.org)"
+          PREEXISTING_RULE_COUNT="$(
+            az keyvault network-rule list \
+              --name "${KV_NAME}" \
+              --resource-group "${KV_RG}" \
+              --query "ipRules[?value=='${RUNNER_PUBLIC_IP}'] | length(@)" \
+              -o tsv
+          )"
+
+          echo "BREAK_GLASS_KEY_VAULT_NAME=${KV_NAME}" >> "$GITHUB_ENV"
+          echo "BREAK_GLASS_KEY_VAULT_RG=${KV_RG}" >> "$GITHUB_ENV"
+          echo "RUNNER_PUBLIC_IP=${RUNNER_PUBLIC_IP}" >> "$GITHUB_ENV"
+
+          if [[ "${PREEXISTING_RULE_COUNT}" == "1" ]]; then
+            echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=true" >> "$GITHUB_ENV"
+          else
+            echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Temporarily allow hosted runner IP to access Key Vault (dev)
+        run: |
+          set -euo pipefail
+
+          if [[ "${BREAK_GLASS_ALLOWLIST_PREEXISTING:-false}" == "true" ]]; then
+            echo "Hosted runner IP is already allowlisted on Key Vault."
+            exit 0
+          fi
+
+          az keyvault network-rule add \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --ip-address "${RUNNER_PUBLIC_IP}" >/dev/null
+          echo "BREAK_GLASS_ALLOWLIST_ADDED=true" >> "$GITHUB_ENV"
+          sleep 10
+
+      - name: Terraform destroy (dev)
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/dev.tfvars -auto-approve
+
+      - name: Remove hosted runner IP from Key Vault (dev)
+        if: always()
+        run: |
+          set -euo pipefail
+
+          if [[ "${BREAK_GLASS_ALLOWLIST_ADDED:-false}" != "true" ]]; then
+            echo "No temporary Key Vault allowlist was added."
+            exit 0
+          fi
+
+          if ! az keyvault show \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --query id -o tsv >/dev/null 2>&1; then
+            echo "Key Vault already removed; no firewall cleanup required."
+            exit 0
+          fi
+
+          az keyvault network-rule remove \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --ip-address "${RUNNER_PUBLIC_IP}" >/dev/null || true
+
   terraform-prod:
     name: Terraform prod (plan/apply)
     if: >-
@@ -469,18 +659,28 @@ jobs:
             echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
           fi
 
+      - name: Terraform init
+        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
+
+      - name: Bootstrap Terraform-managed env prerequisites (prod)
+        if: inputs.bootstrap_mode == true && inputs.action == 'apply'
+        run: |
+          set -euo pipefail
+          terraform -chdir=${{ env.TERRAFORM_DIR }} apply -var-file=vars/prod.tfvars -auto-approve \
+            -target=azurerm_key_vault.main[0] \
+            -target=azurerm_private_endpoint.key_vault[0] \
+            -target=azurerm_container_app_environment.main[0] \
+            -target=azurerm_user_assigned_identity.container_app \
+            -target=azurerm_role_assignment.key_vault_secrets_user
+
       - name: Preflight security checks (prod)
-        env:
-          GH_TOKEN: ${{ secrets.GH_RUNNER_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           ./scripts/check-post-refactor-prereqs.sh \
             --environment "prod" \
             --repo "${GITHUB_REPOSITORY}" \
+            --skip-github-runner-readiness \
             --strict-runner
-
-      - name: Terraform init
-        run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
 
       - name: Adopt existing Container App into Terraform state (prod)
         if: inputs.action == 'apply'
@@ -540,13 +740,13 @@ jobs:
         !cancelled() &&
         inputs.environment == 'prod' &&
         inputs.action == 'destroy' &&
-        needs.prepare-self-hosted-runner.result == 'success'
+        needs.validate-inputs.result == 'success' &&
+        needs.prod-destroy-approval-gate.result == 'success'
       }}
-    needs: [prepare-self-hosted-runner]
-    runs-on: [self-hosted, linux, x64, taskapi-cd, vnet]
+    needs: [validate-inputs, prod-destroy-approval-gate]
+    runs-on: ubuntu-latest
     environment: prod
     permissions:
-      actions: read
       contents: read
       id-token: write
     env:
@@ -588,12 +788,111 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
 
+      - name: Resolve break-glass Key Vault access (prod)
+        run: |
+          set -euo pipefail
+
+          extract_tfvar_string() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" "${file}" | head -n 1
+          }
+
+          extract_tfvar_bool() {
+            local file="$1"
+            local key="$2"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\(true\|false\).*/\1/p" "${file}" | head -n 1
+          }
+
+          TFVARS_FILE="${{ env.TERRAFORM_DIR }}/vars/prod.tfvars"
+          PROJECT_NAME="$(sed -n '/variable "project"/,/}/s/.*default[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p' "${{ env.TERRAFORM_DIR }}/variables.tf" | head -n 1)"
+          ENV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "env")"
+          USE_SHARED_KEY_VAULT="$(extract_tfvar_bool "${TFVARS_FILE}" "use_shared_key_vault")"
+
+          if [[ -z "${ENV_NAME}" ]]; then
+            ENV_NAME="prod"
+          fi
+
+          if [[ "${USE_SHARED_KEY_VAULT}" == "true" ]]; then
+            KV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "shared_key_vault_name")"
+            KV_RG="$(extract_tfvar_string "${TFVARS_FILE}" "shared_key_vault_resource_group_name")"
+          else
+            KV_NAME="$(extract_tfvar_string "${TFVARS_FILE}" "key_vault_name")"
+            if [[ -z "${KV_NAME}" ]]; then
+              KV_NAME="${PROJECT_NAME}-${ENV_NAME}-kv-uks"
+            fi
+            KV_RG="${PROJECT_NAME}-${ENV_NAME}-rg-uks"
+          fi
+
+          if [[ -z "${KV_NAME}" || -z "${KV_RG}" ]]; then
+            echo "::error::Unable to resolve Key Vault name/resource group for hosted destroy."
+            exit 1
+          fi
+
+          RUNNER_PUBLIC_IP="$(curl -fsS https://api.ipify.org)"
+          PREEXISTING_RULE_COUNT="$(
+            az keyvault network-rule list \
+              --name "${KV_NAME}" \
+              --resource-group "${KV_RG}" \
+              --query "ipRules[?value=='${RUNNER_PUBLIC_IP}'] | length(@)" \
+              -o tsv
+          )"
+
+          echo "BREAK_GLASS_KEY_VAULT_NAME=${KV_NAME}" >> "$GITHUB_ENV"
+          echo "BREAK_GLASS_KEY_VAULT_RG=${KV_RG}" >> "$GITHUB_ENV"
+          echo "RUNNER_PUBLIC_IP=${RUNNER_PUBLIC_IP}" >> "$GITHUB_ENV"
+
+          if [[ "${PREEXISTING_RULE_COUNT}" == "1" ]]; then
+            echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=true" >> "$GITHUB_ENV"
+          else
+            echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Temporarily allow hosted runner IP to access Key Vault (prod)
+        run: |
+          set -euo pipefail
+
+          if [[ "${BREAK_GLASS_ALLOWLIST_PREEXISTING:-false}" == "true" ]]; then
+            echo "Hosted runner IP is already allowlisted on Key Vault."
+            exit 0
+          fi
+
+          az keyvault network-rule add \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --ip-address "${RUNNER_PUBLIC_IP}" >/dev/null
+          echo "BREAK_GLASS_ALLOWLIST_ADDED=true" >> "$GITHUB_ENV"
+          sleep 10
+
       - name: Terraform destroy (prod)
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} destroy -var-file=vars/prod.tfvars -auto-approve
 
+      - name: Remove hosted runner IP from Key Vault (prod)
+        if: always()
+        run: |
+          set -euo pipefail
+
+          if [[ "${BREAK_GLASS_ALLOWLIST_ADDED:-false}" != "true" ]]; then
+            echo "No temporary Key Vault allowlist was added."
+            exit 0
+          fi
+
+          if ! az keyvault show \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --query id -o tsv >/dev/null 2>&1; then
+            echo "Key Vault already removed; no firewall cleanup required."
+            exit 0
+          fi
+
+          az keyvault network-rule remove \
+            --name "${BREAK_GLASS_KEY_VAULT_NAME}" \
+            --resource-group "${BREAK_GLASS_KEY_VAULT_RG}" \
+            --ip-address "${RUNNER_PUBLIC_IP}" >/dev/null || true
+
   cleanup-self-hosted-runner:
     name: Deallocate shared self-hosted runner
-    needs: [prepare-self-hosted-runner, terraform-dev, terraform-prod, terraform-prod-destroy]
+    needs: [prepare-self-hosted-runner, terraform-dev, terraform-dev-destroy, terraform-prod, terraform-prod-destroy]
     if: >-
       ${{
         always() &&

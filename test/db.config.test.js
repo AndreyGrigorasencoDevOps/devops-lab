@@ -296,8 +296,11 @@ test('db config: createPool enables TLS automatically for Azure PostgreSQL hosts
   }
 })
 
-test('db config: explicit DB_SSL=disable overrides automatic Azure TLS', () => {
+test('db config: explicit DB_SSL=disable overrides automatic Azure TLS and PGSSLMODE fallback', () => {
   const ctx = loadDbModule()
+  const previousPgSslMode = process.env.PGSSLMODE
+
+  process.env.PGSSLMODE = 'require'
 
   try {
     ctx.db.createPool({
@@ -314,8 +317,14 @@ test('db config: explicit DB_SSL=disable overrides automatic Azure TLS', () => {
       password: 'secret',
       database: 'taskdb',
       port: 5432,
+      ssl: false,
     })
   } finally {
+    if (previousPgSslMode === undefined) {
+      delete process.env.PGSSLMODE
+    } else {
+      process.env.PGSSLMODE = previousPgSslMode
+    }
     ctx.restore()
   }
 })
@@ -329,7 +338,7 @@ test('db config: resolveSslConfig honors DB_SSL_REJECT_UNAUTHORIZED true/false/f
         DB_SSL: 'require',
         DB_SSL_REJECT_UNAUTHORIZED: 'true',
       }),
-      { rejectUnauthorized: true }
+      { mode: 'enabled', rejectUnauthorized: true }
     )
 
     assert.deepEqual(
@@ -337,7 +346,7 @@ test('db config: resolveSslConfig honors DB_SSL_REJECT_UNAUTHORIZED true/false/f
         DB_SSL: 'require',
         DB_SSL_REJECT_UNAUTHORIZED: 'off',
       }),
-      { rejectUnauthorized: false }
+      { mode: 'enabled', rejectUnauthorized: false }
     )
 
     assert.deepEqual(
@@ -345,7 +354,7 @@ test('db config: resolveSslConfig honors DB_SSL_REJECT_UNAUTHORIZED true/false/f
         DB_SSL: 'require',
         DB_SSL_REJECT_UNAUTHORIZED: 'maybe',
       }),
-      { rejectUnauthorized: false }
+      { mode: 'enabled', rejectUnauthorized: false }
     )
   } finally {
     ctx.restore()
@@ -360,14 +369,28 @@ test('db config: resolveSslConfig uses strict defaults for verify-ca and verify-
       ctx.db.resolveSslConfig({
         DB_SSL: 'verify-ca',
       }),
-      { rejectUnauthorized: true }
+      { mode: 'enabled', rejectUnauthorized: true }
     )
 
     assert.deepEqual(
       ctx.db.resolveSslConfig({
         PGSSLMODE: 'verify-full',
       }),
-      { rejectUnauthorized: true }
+      { mode: 'enabled', rejectUnauthorized: true }
+    )
+
+    assert.deepEqual(
+      ctx.db.resolveSslConfig({
+        DB_SSL: 'disable',
+      }),
+      { mode: 'disabled' }
+    )
+
+    assert.deepEqual(
+      ctx.db.resolveSslConfig({
+        DB_HOST: 'localhost',
+      }),
+      { mode: 'inherit' }
     )
   } finally {
     ctx.restore()
