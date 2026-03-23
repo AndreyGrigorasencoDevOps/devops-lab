@@ -1,11 +1,13 @@
+ARG NODE_IMAGE=node:20-alpine
+
 # ---------- deps stage ----------
-FROM node:20-alpine AS deps
+FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
 # ---------- runtime stage ----------
-FROM node:20-alpine AS runner
+FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
 
 # Create non-root user
@@ -20,4 +22,3 @@ USER app
 ENV NODE_ENV=production
 EXPOSE 3000
 CMD ["node", "src/index.mjs"]
-    

@@ -9,10 +9,17 @@ macOS is the primary workstation target, but the same flows are kept documented 
 
 ## Quick Start
 
-1. Initialize Node 20:
+1. Initialize the default Node 20 baseline:
 
 ```bash
 nvm use
+```
+
+CI also validates Node 24. To reproduce the canary path locally, you can optionally run:
+
+```bash
+nvm install 24
+nvm use 24
 ```
 
 2. Create local env file:
