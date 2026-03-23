@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "src/index.mjs",
   "engines": {
-    "node": ">=20 <21",
+    "node": ">=20 <25",
     "npm": ">=10"
   },
   "scripts": {

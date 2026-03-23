@@ -13,9 +13,11 @@ Node.js (Express) Task API used as a DevOps learning project.
 - CI is split by event to reduce noise:
   - PR checks: `.github/workflows/ci.yml` (pull_request only)
   - Push checks: `.github/workflows/ci-push.yml` (push to `main` only)
+- PR-only Node 24 Actions canary lives in `.github/workflows/ci-node24-actions-canary.yml`.
 - Sonar is enabled in quality jobs for both PR and push workflows (token-gated and fork-safe).
 - CD is manual only via `.github/workflows/cd.yml` (`workflow_dispatch` with `environment`, `action`, `image_tag`).
 - CD Terraform jobs run on self-hosted runner labels in Azure VNet (`taskapi-cd`, `vnet`).
+- Hosted quality checks validate the app on Node 20 and Node 24 while the default local/runtime baseline stays on Node 20.
 - Terraform uses one shared root stack (`terraform/`) with:
   - env-specific backend files (`backend/dev.hcl`, `backend/prod.hcl`)
   - env-specific tfvars (`vars/dev.tfvars`, `vars/prod.tfvars`)
@@ -39,7 +41,8 @@ Node.js (Express) Task API used as a DevOps learning project.
 
 ## Stack
 
-- Node.js 20
+- Node.js 20 default runtime baseline
+- Node.js 24 CI validation target
 - Express
 - PostgreSQL (for readiness/connectivity checks)
 - Docker / Docker Compose
@@ -122,6 +125,7 @@ See [docs/local-development.md](./docs/local-development.md) for the full macOS 
 |       L-- prod.tfvars
 L-- .github/workflows/
     +-- ci.yml
+    +-- ci-node24-actions-canary.yml
     +-- ci-push.yml
     L-- cd.yml
 ```
@@ -138,9 +142,9 @@ Jobs:
 
 - Semantic PR title check
 - Dependency review
-- Lint + tests with coverage + Sonar + npm audit
+- Lint + tests with coverage + Sonar + npm audit on Node 20 and Node 24
 - Trivy filesystem/config scans
-- Docker smoke test (`/health`)
+- Docker smoke tests for `node:20-alpine` and `node:24-alpine`
 - PR summary
 
 ### CI Push: `.github/workflows/ci-push.yml`
@@ -151,9 +155,9 @@ Trigger:
 
 Jobs:
 
-- Lint + tests with coverage + Sonar + npm audit
+- Lint + tests with coverage + Sonar + npm audit on Node 20 and Node 24
 - Trivy filesystem/config scans
-- Docker smoke test (`/health`)
+- Docker smoke tests for `node:20-alpine` and `node:24-alpine`
 - Build and push immutable image tag `sha-<short_sha>` to DEV ACR
 - Push summary with `image_tag`, `image_ref`, `image_digest`
 
@@ -168,6 +172,8 @@ Inputs:
 - `environment`: `dev | prod`
 - `action`: `plan | apply | destroy`
 - `image_tag`: required for `plan/apply`, ignored for `destroy`
+- `bootstrap_mode`: opt-in first-apply bootstrap for Terraform-managed env prerequisites
+- `actions_node24_canary`: opt-in Node 24 JavaScript Actions canary for a manual CD run
 
 Behavior:
 
@@ -179,6 +185,18 @@ Behavior:
 - `destroy` runs as a GitHub-hosted break-glass path and temporarily allowlists the runner public IP on Key Vault during the teardown window.
 - Normal release flow is `plan` then `apply` (reconciliation).
 - `destroy` is full state teardown for the selected environment, not selective cleanup.
+
+### Node24 Actions Canary: `.github/workflows/ci-node24-actions-canary.yml`
+
+Trigger:
+
+- Pull requests to `main`
+
+Behavior:
+
+- Forces JavaScript-based GitHub Actions onto Node 24 with `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`.
+- Mirrors the riskiest PR checks (semantic PR title, dependency review, quality, Trivy, Docker smoke) without changing the default push/CD path.
+- Exists to surface upstream action compatibility early before GitHub's Node 24 runner default becomes mandatory.
 
 ## Terraform Quick Start
 

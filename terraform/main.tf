@@ -91,7 +91,7 @@ locals {
     apt-get update
     apt-get install -y terraform gh
 
-    RUNNER_VERSION="2.324.0"
+    RUNNER_VERSION="2.330.0"
     install -d -m 0755 /opt/actions-runner
     cd /opt/actions-runner
     curl -fsSL -o actions-runner.tar.gz "https://github.com/actions/runner/releases/download/v$${RUNNER_VERSION}/actions-runner-linux-x64-$${RUNNER_VERSION}.tar.gz"

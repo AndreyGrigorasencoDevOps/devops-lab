@@ -16,22 +16,26 @@ env:
 
 jobs:
   quality:
-    name: Lint, tests, Sonar, audit
+    name: Quality (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "24"]
     env:
       HAS_SONAR_TOKEN: ${{ secrets.SONAR_TOKEN != '' }}
     permissions:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: ${{ matrix.node-version }}
           cache: "npm"
 
       - name: Install dependencies
@@ -40,17 +44,20 @@ jobs:
       - name: Run lint
         run: npm run lint
 
+      - name: Run tests
+        run: npm test
+
       - name: Run tests with coverage
         run: npm run test:coverage
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: coverage-report
+          name: coverage-report-node-${{ matrix.node-version }}
           path: coverage/lcov.info
 
       - name: Sonar scan
-        if: ${{ env.HAS_SONAR_TOKEN == 'true' }}
+        if: ${{ matrix.node-version == '20' && env.HAS_SONAR_TOKEN == 'true' }}
         uses: SonarSource/sonarqube-scan-action@v6
         with:
           args: >
@@ -70,7 +77,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.33.1
@@ -95,8 +102,16 @@ jobs:
           format: table
 
   smoke:
-    name: Docker smoke
+    name: Docker smoke (${{ matrix.smoke-tag }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node-image: node:20-alpine
+            smoke-tag: node20
+          - node-image: node:24-alpine
+            smoke-tag: node24
     permissions:
       contents: read
     services:
@@ -115,7 +130,7 @@ jobs:
           --health-retries=20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -125,9 +140,11 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          build-args: |
+            NODE_IMAGE=${{ matrix.node-image }}
           push: false
           load: true
-          tags: local/smoke:test
+          tags: local/smoke:${{ matrix.smoke-tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -142,7 +159,7 @@ jobs:
             -e DB_USER=postgres \
             -e DB_PASSWORD=postgres \
             -e DB_NAME=taskdb \
-            local/smoke:test)
+            local/smoke:${{ matrix.smoke-tag }})
           trap 'docker rm -f "$cid" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
             if curl -fsS --max-time 2 "http://127.0.0.1:$SMOKE_PORT$SMOKE_HEALTH_PATH"; then
@@ -171,7 +188,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -247,6 +264,9 @@ jobs:
           echo "| Trivy | \`${{ needs.trivy.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker smoke | \`${{ needs.smoke.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Build/push DEV ACR | \`${{ needs.build-push-dev-acr.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Quality runs on Node 20 and Node 24." >> "$GITHUB_STEP_SUMMARY"
+          echo "Docker smoke validates both \`node:20-alpine\` and \`node:24-alpine\` images; the published DEV image still uses the Dockerfile default runtime." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Image for CD" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
