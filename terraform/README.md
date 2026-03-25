@@ -141,6 +141,7 @@ Steady-state target:
 
 ## CI/CD integration
 
+- The repo default Docker and application runtime baseline is Node 24.
 - CI builds immutable image tags (`sha-<short_sha>`) to DEV ACR.
 - CD receives `image_tag` and runs Terraform `plan|apply|destroy`.
 - PROD promotes the image from DEV ACR to PROD ACR by digest before Terraform.

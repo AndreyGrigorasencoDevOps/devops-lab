@@ -28,6 +28,7 @@ Use Azure login step in workflows:
 
 ## 2) Runtime and Registry Model
 
+- Node 24 is the default application and container runtime baseline.
 - DEV push workflow builds and pushes immutable image tags to DEV ACR.
 - PROD deployments promote image by digest from DEV ACR to PROD ACR.
 - Container App runtime pulls via managed identity (`AcrPull` role).

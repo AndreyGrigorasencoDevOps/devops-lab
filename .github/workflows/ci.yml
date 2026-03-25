@@ -54,12 +54,8 @@ jobs:
           fail-on-severity: high
 
   quality:
-    name: Quality (Node ${{ matrix.node-version }})
+    name: Quality (Node 24)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: ["20", "24"]
     env:
       HAS_SONAR_TOKEN: ${{ secrets.SONAR_TOKEN != '' }}
     permissions:
@@ -73,7 +69,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
@@ -91,11 +87,11 @@ jobs:
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v6
         with:
-          name: coverage-report-node-${{ matrix.node-version }}
+          name: coverage-report-node24
           path: coverage/lcov.info
 
       - name: Sonar scan
-        if: ${{ matrix.node-version == '20' && env.HAS_SONAR_TOKEN == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        if: ${{ env.HAS_SONAR_TOKEN == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: SonarSource/sonarqube-scan-action@v6
         with:
           args: >
@@ -140,16 +136,8 @@ jobs:
           format: table
 
   smoke:
-    name: Docker smoke (${{ matrix.smoke-tag }})
+    name: Docker smoke
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - node-image: node:20-alpine
-            smoke-tag: node20
-          - node-image: node:24-alpine
-            smoke-tag: node24
     permissions:
       contents: read
     services:
@@ -178,11 +166,9 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          build-args: |
-            NODE_IMAGE=${{ matrix.node-image }}
           push: false
           load: true
-          tags: local/smoke:${{ matrix.smoke-tag }}
+          tags: local/smoke:node24
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -197,7 +183,7 @@ jobs:
             -e DB_USER=postgres \
             -e DB_PASSWORD=postgres \
             -e DB_NAME=taskdb \
-            local/smoke:${{ matrix.smoke-tag }})
+            local/smoke:node24)
           trap 'docker rm -f "$cid" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
             if curl -fsS --max-time 2 "http://127.0.0.1:$SMOKE_PORT$SMOKE_HEALTH_PATH"; then
@@ -235,7 +221,7 @@ jobs:
           echo "| Trivy | \`${{ needs.trivy.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker smoke | \`${{ needs.smoke.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Quality runs on Node 20 and Node 24." >> "$GITHUB_STEP_SUMMARY"
-          echo "Docker smoke validates both \`node:20-alpine\` and \`node:24-alpine\` images." >> "$GITHUB_STEP_SUMMARY"
+          echo "Quality runs on Node 24." >> "$GITHUB_STEP_SUMMARY"
+          echo "Docker smoke validates the default \`node:24-alpine\` image." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Sonar scan runs when \`SONAR_TOKEN\` exists and PR is from this repository." >> "$GITHUB_STEP_SUMMARY"

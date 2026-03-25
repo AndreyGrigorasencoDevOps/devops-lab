@@ -6,6 +6,7 @@ This roadmap is the source of truth for platform status and the recommended lear
 
 - Core platform foundations are complete through Stage 7.
 - Current recommended focus: Stage 8, then Stage 9.
+- Current runtime and delivery baseline: Node 24 across local development, Docker, CI, and CD.
 - Stages 10 and 11 are later expansion tracks and are not required for junior readiness on the current Azure Container Apps + Terraform + GitHub Actions stack.
 - Treat each completed stage as both learning evidence and portfolio evidence.
 - Companion study system: [Revision runbook](./revision/revision-runbook.md)
