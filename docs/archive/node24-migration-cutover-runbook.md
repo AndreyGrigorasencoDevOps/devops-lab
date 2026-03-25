@@ -1,6 +1,6 @@
-# Node 24 Migration Temp Runbook
+# Archived Node 24 Migration Cutover Runbook
 
-Temporary notes for the staged Node 24 migration rollout. This is intentionally lightweight and can be deleted once the migration is complete.
+Historical notes from the staged Node 24 migration rollout. The platform now runs on Node 24 by default, so this document is kept only as archived implementation context.
 
 ## Current State
 

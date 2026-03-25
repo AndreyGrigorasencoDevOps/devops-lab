@@ -29,11 +29,6 @@ on:
         required: false
         type: boolean
         default: false
-      actions_node24_canary:
-        description: "Opt-in canary for GitHub JavaScript actions under Node 24 during this manual run."
-        required: false
-        type: boolean
-        default: false
 
 concurrency:
   group: cd-shared-runner
@@ -47,7 +42,6 @@ env:
   SHARED_RUNNER_REQUIRED_LABELS: taskapi-cd,vnet
   RUNNER_BOOT_TIMEOUT_SECONDS: "600"
   RUNNER_POLL_INTERVAL_SECONDS: "10"
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: ${{ inputs.actions_node24_canary == true && 'true' || '' }}
 
 jobs:
   validate-inputs:
@@ -95,7 +89,6 @@ jobs:
           echo "| Terraform action | \`${{ inputs.action }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Image tag | \`$IMAGE_TAG\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bootstrap mode | \`${{ inputs.bootstrap_mode }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Actions Node 24 canary | \`${{ inputs.actions_node24_canary }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Backend config | \`$BACKEND_FILE\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Var file | \`$VAR_FILE\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -106,10 +99,6 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "Bootstrap mode will pre-create Terraform-managed env prerequisites before the normal preflight." >> "$GITHUB_STEP_SUMMARY"
             echo "Shared runner infrastructure must already exist, and \`${{ inputs.environment }}-db-password\` still must be present in the env Key Vault." >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [[ "${{ inputs.actions_node24_canary }}" == "true" ]]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "This run forces JavaScript-based GitHub Actions onto Node 24 for canary validation." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   resolve-prod-source:

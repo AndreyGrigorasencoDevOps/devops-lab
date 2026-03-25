@@ -13,11 +13,11 @@ Node.js (Express) Task API used as a DevOps learning project.
 - CI is split by event to reduce noise:
   - PR checks: `.github/workflows/ci.yml` (pull_request only)
   - Push checks: `.github/workflows/ci-push.yml` (push to `main` only)
-- PR-only Node 24 Actions canary lives in `.github/workflows/ci-node24-actions-canary.yml`.
+- Node 24 is the single supported runtime baseline across local development, Docker, CI, and CD.
 - Sonar is enabled in quality jobs for both PR and push workflows (token-gated and fork-safe).
 - CD is manual only via `.github/workflows/cd.yml` (`workflow_dispatch` with `environment`, `action`, `image_tag`).
 - CD Terraform jobs run on self-hosted runner labels in Azure VNet (`taskapi-cd`, `vnet`).
-- Hosted quality checks validate the app on Node 20 and Node 24 while the default local/runtime baseline stays on Node 20.
+- Hosted quality checks validate the app on Node 24, and Docker smoke validates the default Node 24 image.
 - Terraform uses one shared root stack (`terraform/`) with:
   - env-specific backend files (`backend/dev.hcl`, `backend/prod.hcl`)
   - env-specific tfvars (`vars/dev.tfvars`, `vars/prod.tfvars`)
@@ -33,6 +33,7 @@ Node.js (Express) Task API used as a DevOps learning project.
 - Archived paid-normalization rollout: [docs/current-rollout-runbook.md](./docs/current-rollout-runbook.md)
 - Archived post-refactor reference: [docs/post-refactor-runbook.md](./docs/post-refactor-runbook.md)
 - Archived Phase 2 cutover: [docs/phase2-cutover-next-steps.md](./docs/phase2-cutover-next-steps.md)
+- Archived Node 24 cutover: [docs/archive/node24-migration-cutover-runbook.md](./docs/archive/node24-migration-cutover-runbook.md)
 - Legacy archive note: [docs/archive/terraform-environments-legacy.md](./docs/archive/terraform-environments-legacy.md)
 - Security operations: [docs/security-operations.md](./docs/security-operations.md)
 - Terraform usage: [terraform/README.md](./terraform/README.md)
@@ -41,8 +42,7 @@ Node.js (Express) Task API used as a DevOps learning project.
 
 ## Stack
 
-- Node.js 20 default runtime baseline
-- Node.js 24 CI validation target
+- Node.js 24
 - Express
 - PostgreSQL (for readiness/connectivity checks)
 - Docker / Docker Compose
@@ -82,7 +82,7 @@ App default URL: `http://localhost:3000`
 docker compose up --build
 ```
 
-See [docs/local-development.md](./docs/local-development.md) for the full macOS + WSL local runbook, troubleshooting, and migration notes.
+See [docs/local-development.md](./docs/local-development.md) for the full macOS + WSL local runbook and troubleshooting guide.
 
 ## Project Structure
 
@@ -125,7 +125,6 @@ See [docs/local-development.md](./docs/local-development.md) for the full macOS 
 |       L-- prod.tfvars
 L-- .github/workflows/
     +-- ci.yml
-    +-- ci-node24-actions-canary.yml
     +-- ci-push.yml
     L-- cd.yml
 ```
@@ -142,9 +141,9 @@ Jobs:
 
 - Semantic PR title check
 - Dependency review
-- Lint + tests with coverage + Sonar + npm audit on Node 20 and Node 24
+- Lint + tests with coverage + Sonar + npm audit on Node 24
 - Trivy filesystem/config scans
-- Docker smoke tests for `node:20-alpine` and `node:24-alpine`
+- Docker smoke test for the default `node:24-alpine` image
 - PR summary
 
 ### CI Push: `.github/workflows/ci-push.yml`
@@ -155,9 +154,9 @@ Trigger:
 
 Jobs:
 
-- Lint + tests with coverage + Sonar + npm audit on Node 20 and Node 24
+- Lint + tests with coverage + Sonar + npm audit on Node 24
 - Trivy filesystem/config scans
-- Docker smoke tests for `node:20-alpine` and `node:24-alpine`
+- Docker smoke test for the default `node:24-alpine` image
 - Build and push immutable image tag `sha-<short_sha>` to DEV ACR
 - Push summary with `image_tag`, `image_ref`, `image_digest`
 
@@ -173,7 +172,6 @@ Inputs:
 - `action`: `plan | apply | destroy`
 - `image_tag`: required for `plan/apply`, ignored for `destroy`
 - `bootstrap_mode`: opt-in first-apply bootstrap for Terraform-managed env prerequisites
-- `actions_node24_canary`: opt-in Node 24 JavaScript Actions canary for a manual CD run
 
 Behavior:
 
@@ -185,18 +183,6 @@ Behavior:
 - `destroy` runs as a GitHub-hosted break-glass path and temporarily allowlists the runner public IP on Key Vault during the teardown window.
 - Normal release flow is `plan` then `apply` (reconciliation).
 - `destroy` is full state teardown for the selected environment, not selective cleanup.
-
-### Node24 Actions Canary: `.github/workflows/ci-node24-actions-canary.yml`
-
-Trigger:
-
-- Pull requests to `main`
-
-Behavior:
-
-- Forces JavaScript-based GitHub Actions onto Node 24 with `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`.
-- Mirrors the riskiest PR checks (semantic PR title, dependency review, quality, Trivy, Docker smoke) without changing the default push/CD path.
-- Exists to surface upstream action compatibility early before GitHub's Node 24 runner default becomes mandatory.
 
 ## Terraform Quick Start
 
