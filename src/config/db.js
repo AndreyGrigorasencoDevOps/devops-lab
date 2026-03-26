@@ -4,8 +4,8 @@ const { Pool } = require("pg");
 const logger = require("../utils/logger");
 
 const AZURE_POSTGRES_HOST_SUFFIX = ".postgres.database.azure.com";
-const SSL_DISABLED_MODES = ["disable", "false", "0", "no", "off"];
-const SSL_ENABLED_MODES = ["require", "verify-ca", "verify-full", "true", "1", "yes", "on"];
+const SSL_DISABLED_MODES = new Set(["disable", "false", "0", "no", "off"]);
+const SSL_ENABLED_MODES = new Set(["require", "verify-ca", "verify-full", "true", "1", "yes", "on"]);
 
 function resolveRejectUnauthorized(env, defaultValue) {
   const rawValue = env.DB_SSL_REJECT_UNAUTHORIZED;
@@ -33,11 +33,11 @@ function resolveSslConfig(env = process.env) {
   if (typeof sslMode === "string") {
     const normalizedMode = sslMode.trim().toLowerCase();
 
-    if (SSL_DISABLED_MODES.includes(normalizedMode)) {
+    if (SSL_DISABLED_MODES.has(normalizedMode)) {
       return { mode: "disabled" };
     }
 
-    if (SSL_ENABLED_MODES.includes(normalizedMode)) {
+    if (SSL_ENABLED_MODES.has(normalizedMode)) {
       return {
         mode: "enabled",
         rejectUnauthorized: resolveRejectUnauthorized(
