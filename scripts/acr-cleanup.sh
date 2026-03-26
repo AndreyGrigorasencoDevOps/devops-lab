@@ -111,6 +111,14 @@ if ! jq -e --arg active_tag "${ACTIVE_TAG}" '.[] | select(.name == $active_tag)'
   exit 1
 fi
 
+MANIFEST_METADATA_JSON="$(
+  az acr manifest list-metadata \
+    --registry "${ACR_NAME}" \
+    --name "${IMAGE_REPOSITORY}" \
+    --orderby time_desc \
+    -o json
+)"
+
 SHA_TAGS=()
 while IFS= read -r tag; do
   SHA_TAGS+=("${tag}")
@@ -173,19 +181,57 @@ for tag in "${OLD_SHA_TAGS[@]-}"; do
   fi
 done
 
+PROTECTED_TAGS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${KEEP_TAGS[@]-}")"
+DELETE_TAGS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${DELETE_TAGS[@]-}")"
+
+PROTECTED_DIGESTS=()
+PROTECTED_DIGESTS_RAW="$(
+  jq -r --argjson protected_tags "${PROTECTED_TAGS_JSON}" '
+    .[] |
+    select(.digest != null) |
+    select((.tags // []) | any(. as $tag | ($protected_tags | index($tag)) != null)) |
+    .digest
+  ' <<<"${MANIFEST_METADATA_JSON}"
+)"
+while IFS= read -r digest; do
+  PROTECTED_DIGESTS+=("${digest}")
+done <<<"${PROTECTED_DIGESTS_RAW}"
+
+PROTECTED_DIGESTS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${PROTECTED_DIGESTS[@]-}")"
+
+DELETE_DIGESTS=()
+DELETE_DIGESTS_RAW="$(
+  jq -r \
+    --argjson delete_tags "${DELETE_TAGS_JSON}" \
+    --argjson protected_digests "${PROTECTED_DIGESTS_JSON}" '
+      .[] as $manifest |
+      select($manifest.digest != null) |
+      select(($manifest.tags // []) | length > 0) |
+      select(($protected_digests | index($manifest.digest)) == null) |
+      select(($manifest.tags // []) | map(test("^sha-")) | all) |
+      select(((($manifest.tags // []) - $delete_tags) | length) == 0) |
+      $manifest.digest
+    ' <<<"${MANIFEST_METADATA_JSON}"
+)"
+while IFS= read -r digest; do
+  DELETE_DIGESTS+=("${digest}")
+done <<<"${DELETE_DIGESTS_RAW}"
+
 DELETED_TAGS=()
+DELETED_DIGESTS=()
 if [[ "${DRY_RUN}" == "false" ]]; then
-  for tag in "${DELETE_TAGS[@]-}"; do
-    if [[ -z "${tag}" ]]; then
+  for digest in "${DELETE_DIGESTS[@]-}"; do
+    if [[ -z "${digest}" ]]; then
       continue
     fi
 
-    az acr repository delete \
-      --name "${ACR_NAME}" \
-      --image "${IMAGE_REPOSITORY}:${tag}" \
+    az acr manifest delete \
+      --registry "${ACR_NAME}" \
+      --name "${IMAGE_REPOSITORY}@${digest}" \
       --yes
-    DELETED_TAGS+=("${tag}")
+    DELETED_DIGESTS+=("${digest}")
   done
+  DELETED_TAGS=("${DELETE_TAGS[@]-}")
 fi
 
 echo "Environment: ${CLEANUP_ENV_LABEL}"
@@ -195,11 +241,15 @@ echo "Mode: $( [[ "${DRY_RUN}" == "true" ]] && echo "dry-run" || echo "live" )"
 echo "Active image: ${ACTIVE_IMAGE}"
 echo "Active tag: ${ACTIVE_TAG}"
 print_list "Protected tags" "${KEEP_TAGS[@]-}"
-print_list "Delete candidates" "${DELETE_TAGS[@]-}"
+print_list "Protected digests" "${PROTECTED_DIGESTS[@]-}"
+print_list "Delete candidate tags" "${DELETE_TAGS[@]-}"
+print_list "Delete candidate digests" "${DELETE_DIGESTS[@]-}"
 if [[ "${DRY_RUN}" == "true" ]]; then
   print_list "Deleted tags" "dry-run only"
+  print_list "Deleted digests" "dry-run only"
 else
   print_list "Deleted tags" "${DELETED_TAGS[@]-}"
+  print_list "Deleted digests" "${DELETED_DIGESTS[@]-}"
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
@@ -220,10 +270,14 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   } >> "${GITHUB_STEP_SUMMARY}"
 
   append_summary_list "Protected tags" "${KEEP_TAGS[@]-}"
-  append_summary_list "Delete candidates" "${DELETE_TAGS[@]-}"
+  append_summary_list "Protected digests" "${PROTECTED_DIGESTS[@]-}"
+  append_summary_list "Delete candidate tags" "${DELETE_TAGS[@]-}"
+  append_summary_list "Delete candidate digests" "${DELETE_DIGESTS[@]-}"
   if [[ "${DRY_RUN}" == "true" ]]; then
     append_summary_list "Deleted tags" "dry-run only"
+    append_summary_list "Deleted digests" "dry-run only"
   else
     append_summary_list "Deleted tags" "${DELETED_TAGS[@]-}"
+    append_summary_list "Deleted digests" "${DELETED_DIGESTS[@]-}"
   fi
 fi

@@ -39,6 +39,7 @@ Use Azure login step in workflows:
 - Old image cleanup is still useful because it keeps growth bounded and makes rollback inventory easier to reason about.
 - `.github/workflows/acr-cleanup.yml` is the repo-managed registry hygiene workflow.
 - The workflow always preserves the currently deployed Container App image tag, even if it is older than the newest retained tags.
+- Cleanup is digest-safe: it only deletes a manifest when none of its tags are protected by the retention rules.
 - Retention policy:
   - DEV: keep the active tag plus the latest 5 additional `sha-*` tags; delete only tags older than 7 days
   - PROD: keep the active tag plus the latest 10 additional `sha-*` tags; delete only tags older than 30 days
