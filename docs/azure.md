@@ -33,6 +33,23 @@ Use Azure login step in workflows:
 - PROD deployments promote image by digest from DEV ACR to PROD ACR.
 - Container App runtime pulls via managed identity (`AcrPull` role).
 
+## 2.1) ACR Hygiene and Cost Control
+
+- Both live registries run on the `Basic` SKU, so the current ACR bill is primarily the fixed tier fee, not a storage overage.
+- Old image cleanup is still useful because it keeps growth bounded and makes rollback inventory easier to reason about.
+- `.github/workflows/acr-cleanup.yml` is the repo-managed registry hygiene workflow.
+- The workflow always preserves the currently deployed Container App image tag, even if it is older than the newest retained tags.
+- Retention policy:
+  - DEV: keep the active tag plus the latest 5 additional `sha-*` tags; delete only tags older than 7 days
+  - PROD: keep the active tag plus the latest 10 additional `sha-*` tags; delete only tags older than 30 days
+- Non-`sha-*` tags are ignored by the cleanup workflow.
+- Preferred rollout:
+  1. run `workflow_dispatch` with `dry_run=true`
+  2. review the step summary
+  3. rerun with `dry_run=false`
+  4. leave the weekly schedule in place for steady-state hygiene
+- Do not treat this as a major current cost-saving lever. It is registry hygiene and future storage control.
+
 ## 3) Key Vault and Secrets
 
 Database + Key Vault model:
@@ -117,6 +134,7 @@ az role assignment list \
 4. CD runs `plan` then `apply` for target environment.
 5. Validate `/health` and `/ready` on the deployed app.
 6. For runner relocation or break-glass work, use a trusted local shell or temporary GitHub-hosted runner, not the self-hosted runner VM being replaced.
+7. Use `acr-cleanup.yml` for registry hygiene after deployments have settled; avoid running manual cleanup during an active prod rollout.
 
 Detailed steps:
 

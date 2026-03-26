@@ -1,0 +1,121 @@
+name: ACR Cleanup
+run-name: >-
+  ACR Cleanup | env=${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || 'both' }} |
+  dry_run=${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: "Which environment registry to clean"
+        required: true
+        type: choice
+        default: both
+        options:
+          - both
+          - dev
+          - prod
+      dry_run:
+        description: "Preview deletions without removing any image tags"
+        required: true
+        type: boolean
+        default: true
+  schedule:
+    - cron: "17 4 * * 1"
+
+concurrency:
+  group: acr-cleanup
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPOSITORY: task-api
+
+jobs:
+  cleanup-dev:
+    name: Cleanup DEV ACR
+    if: >-
+      ${{
+        github.event_name != 'workflow_dispatch' ||
+        inputs.target_environment == 'dev' ||
+        inputs.target_environment == 'both'
+      }}
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CLEANUP_ENV_LABEL: DEV
+      RESOURCE_GROUP: taskapi-dev-rg-uks
+      CONTAINER_APP_NAME: taskapi-dev-app
+      KEEP_LATEST: "5"
+      MIN_AGE_DAYS: "7"
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+      ACR_NAME: ${{ vars.ACR_NAME }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Cleanup DEV ACR tags
+        run: bash ./scripts/acr-cleanup.sh
+
+  cleanup-prod:
+    name: Cleanup PROD ACR
+    if: >-
+      ${{
+        github.event_name != 'workflow_dispatch' ||
+        inputs.target_environment == 'prod' ||
+        inputs.target_environment == 'both'
+      }}
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CLEANUP_ENV_LABEL: PROD
+      RESOURCE_GROUP: taskapi-prod-rg-uks
+      CONTAINER_APP_NAME: taskapi-prod-app
+      KEEP_LATEST: "10"
+      MIN_AGE_DAYS: "30"
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+      ACR_NAME: ${{ vars.ACR_NAME }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Cleanup PROD ACR tags
+        run: bash ./scripts/acr-cleanup.sh
+
+  cleanup-summary:
+    name: Cleanup summary
+    if: always()
+    needs: [cleanup-dev, cleanup-prod]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Publish cleanup summary
+        run: |
+          echo "## ACR Cleanup Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Job | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| DEV ACR | \`${{ needs.cleanup-dev.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| PROD ACR | \`${{ needs.cleanup-prod.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Run manual dry-runs first, then use live mode once the retention summary looks correct." >> "$GITHUB_STEP_SUMMARY"

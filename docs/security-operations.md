@@ -85,6 +85,16 @@ Source of truth:
 - this runbook
 - `docs/ROADMAP.md`
 
+## 5.1) ACR cleanup cadence
+
+- Use `.github/workflows/acr-cleanup.yml` to prune old immutable ACR tags safely.
+- Run a manual dry-run before the first live cleanup and after any retention-policy change.
+- The workflow protects the currently deployed Container App tag in each environment before deleting anything.
+- Current retention targets:
+  - DEV: active tag + latest 5 additional `sha-*` tags, age threshold 7 days
+  - PROD: active tag + latest 10 additional `sha-*` tags, age threshold 30 days
+- Do not run manual cleanup during an active prod deployment window.
+
 ## 6) Break-glass posture
 
 - Run break-glass Terraform from `ubuntu-latest` or a trusted local shell, not from a self-hosted runner that is being replaced.

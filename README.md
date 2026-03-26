@@ -18,6 +18,7 @@ Node.js (Express) Task API used as a DevOps learning project.
 - CD is manual only via `.github/workflows/cd.yml` (`workflow_dispatch` with `environment`, `action`, `image_tag`).
 - CD Terraform jobs run on self-hosted runner labels in Azure VNet (`taskapi-cd`, `vnet`).
 - Hosted quality checks validate the app on Node 24, and Docker smoke validates the default Node 24 image.
+- ACR hygiene is automated via `.github/workflows/acr-cleanup.yml`, which preserves deployed tags and prunes older immutable `sha-*` tags on a safer retention window.
 - Terraform uses one shared root stack (`terraform/`) with:
   - env-specific backend files (`backend/dev.hcl`, `backend/prod.hcl`)
   - env-specific tfvars (`vars/dev.tfvars`, `vars/prod.tfvars`)
@@ -183,6 +184,20 @@ Behavior:
 - `destroy` runs as a GitHub-hosted break-glass path and temporarily allowlists the runner public IP on Key Vault during the teardown window.
 - Normal release flow is `plan` then `apply` (reconciliation).
 - `destroy` is full state teardown for the selected environment, not selective cleanup.
+
+### ACR Hygiene: `.github/workflows/acr-cleanup.yml`
+
+Trigger:
+
+- Manual `workflow_dispatch`
+- Weekly schedule
+
+Behavior:
+
+- Queries the currently deployed DEV and PROD Container App image tags before selecting any deletions.
+- Keeps the active deployed tag even if it is older than the newest retained tags.
+- Prunes only immutable `sha-*` tags that fall outside the configured retention window.
+- Defaults to `dry_run=true` for manual executions so cleanup can be reviewed before anything is deleted.
 
 ## Terraform Quick Start
 
