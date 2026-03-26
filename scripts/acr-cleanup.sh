@@ -218,6 +218,19 @@ while IFS= read -r digest; do
 done <<<"${DELETE_DIGESTS_RAW}"
 
 DELETED_TAGS=()
+DELETED_TAGS_RAW="$(
+  jq -r \
+    --argjson delete_digests "$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${DELETE_DIGESTS[@]-}")" '
+      .[] as $manifest |
+      select($manifest.digest != null) |
+      select(($delete_digests | index($manifest.digest)) != null) |
+      ($manifest.tags // [])[]
+    ' <<<"${MANIFEST_METADATA_JSON}" | sort -u
+)"
+while IFS= read -r tag; do
+  DELETED_TAGS+=("${tag}")
+done <<<"${DELETED_TAGS_RAW}"
+
 DELETED_DIGESTS=()
 if [[ "${DRY_RUN}" == "false" ]]; then
   for digest in "${DELETE_DIGESTS[@]-}"; do
@@ -231,7 +244,6 @@ if [[ "${DRY_RUN}" == "false" ]]; then
       --yes
     DELETED_DIGESTS+=("${digest}")
   done
-  DELETED_TAGS=("${DELETE_TAGS[@]-}")
 fi
 
 echo "Environment: ${CLEANUP_ENV_LABEL}"
