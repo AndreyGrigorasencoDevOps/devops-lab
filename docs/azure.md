@@ -137,6 +137,40 @@ az role assignment list \
 6. For runner relocation or break-glass work, use a trusted local shell or temporary GitHub-hosted runner, not the self-hosted runner VM being replaced.
 7. Use `acr-cleanup.yml` for registry hygiene after deployments have settled; avoid running manual cleanup during an active prod rollout.
 
+## 5.1) Study Switch Workflow
+
+Use `.github/workflows/study-switch.yml` for manual lab cost control on the PostgreSQL slice only.
+
+Inputs:
+
+- `environment`: `dev`, `prod`, or `both`
+- `operation`: `wake`, `sleep`, or `reset`
+- `warm_apps`: when `true`, `wake` polls the public `https://<fqdn>/ready` endpoint after DB availability returns
+- `confirm_reset`: must equal `RESET` when `operation=reset`
+
+Behavior:
+
+- `sleep`:
+  - stops PostgreSQL compute only
+  - keeps storage, automated backups, and the rest of the platform intact
+  - is the faster path when you expect to resume studying soon
+- `wake`:
+  - starts PostgreSQL when it exists but is stopped
+  - recreates only the PostgreSQL slice through targeted Terraform when it was previously reset
+  - optionally warms the app through `/ready`
+- `reset`:
+  - destroys only the PostgreSQL server, database, and optional firewall rule
+  - preserves the rest of the platform, including Key Vault, ACR, CAE, VNets, and Container App
+  - is destructive and intended for longer idle periods
+
+Operational notes:
+
+- `sleep` saves PostgreSQL compute only.
+- `reset` saves PostgreSQL compute plus DB storage and automated backup charges.
+- Neither action removes fixed platform costs such as ACR Basic or Private Endpoint charges.
+- `prod` reset stays behind the GitHub `prod` environment approval path and the explicit `confirm_reset=RESET` guard.
+- When targeted Terraform DB actions run from a GitHub-hosted runner, the workflow temporarily allowlists the runner public IP on the env Key Vault and removes that rule afterward.
+
 Detailed steps:
 
 - `docs/post-refactor-runbook.md`

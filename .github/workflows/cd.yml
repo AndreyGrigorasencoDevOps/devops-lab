@@ -31,7 +31,7 @@ on:
         default: false
 
 concurrency:
-  group: cd-shared-runner
+  group: platform-control-plane
   cancel-in-progress: false
 
 env:
