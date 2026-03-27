@@ -228,6 +228,9 @@ DELETED_TAGS_RAW="$(
     ' <<<"${MANIFEST_METADATA_JSON}" | sort -u
 )"
 while IFS= read -r tag; do
+  if [[ -z "${tag}" ]]; then
+    continue
+  fi
   DELETED_TAGS+=("${tag}")
 done <<<"${DELETED_TAGS_RAW}"
 
