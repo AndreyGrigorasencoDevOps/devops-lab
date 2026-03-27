@@ -171,7 +171,7 @@ done < <(
 )
 
 DELETE_TAGS=()
-for tag in "${OLD_SHA_TAGS[@]-}"; do
+for tag in "${OLD_SHA_TAGS[@]}"; do
   if [[ -z "${tag}" ]]; then
     continue
   fi
@@ -181,8 +181,8 @@ for tag in "${OLD_SHA_TAGS[@]-}"; do
   fi
 done
 
-PROTECTED_TAGS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${KEEP_TAGS[@]-}")"
-DELETE_TAGS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${DELETE_TAGS[@]-}")"
+PROTECTED_TAGS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${KEEP_TAGS[@]}")"
+DELETE_TAGS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${DELETE_TAGS[@]}")"
 
 PROTECTED_DIGESTS=()
 PROTECTED_DIGESTS_RAW="$(
@@ -194,10 +194,13 @@ PROTECTED_DIGESTS_RAW="$(
   ' <<<"${MANIFEST_METADATA_JSON}"
 )"
 while IFS= read -r digest; do
+  if [[ -z "${digest}" ]]; then
+    continue
+  fi
   PROTECTED_DIGESTS+=("${digest}")
 done <<<"${PROTECTED_DIGESTS_RAW}"
 
-PROTECTED_DIGESTS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${PROTECTED_DIGESTS[@]-}")"
+PROTECTED_DIGESTS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${PROTECTED_DIGESTS[@]}")"
 
 DELETE_DIGESTS=()
 DELETE_DIGESTS_RAW="$(
@@ -214,13 +217,16 @@ DELETE_DIGESTS_RAW="$(
     ' <<<"${MANIFEST_METADATA_JSON}"
 )"
 while IFS= read -r digest; do
+  if [[ -z "${digest}" ]]; then
+    continue
+  fi
   DELETE_DIGESTS+=("${digest}")
 done <<<"${DELETE_DIGESTS_RAW}"
 
 DELETED_TAGS=()
 DELETED_TAGS_RAW="$(
   jq -r \
-    --argjson delete_digests "$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${DELETE_DIGESTS[@]-}")" '
+    --argjson delete_digests "$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${DELETE_DIGESTS[@]}")" '
       .[] as $manifest |
       select($manifest.digest != null) |
       select(($delete_digests | index($manifest.digest)) != null) |
@@ -236,7 +242,7 @@ done <<<"${DELETED_TAGS_RAW}"
 
 DELETED_DIGESTS=()
 if [[ "${DRY_RUN}" == "false" ]]; then
-  for digest in "${DELETE_DIGESTS[@]-}"; do
+  for digest in "${DELETE_DIGESTS[@]}"; do
     if [[ -z "${digest}" ]]; then
       continue
     fi
@@ -255,16 +261,16 @@ echo "Container App: ${CONTAINER_APP_NAME}"
 echo "Mode: $( [[ "${DRY_RUN}" == "true" ]] && echo "dry-run" || echo "live" )"
 echo "Active image: ${ACTIVE_IMAGE}"
 echo "Active tag: ${ACTIVE_TAG}"
-print_list "Protected tags" "${KEEP_TAGS[@]-}"
-print_list "Protected digests" "${PROTECTED_DIGESTS[@]-}"
-print_list "Delete candidate tags" "${DELETE_TAGS[@]-}"
-print_list "Delete candidate digests" "${DELETE_DIGESTS[@]-}"
+print_list "Protected tags" "${KEEP_TAGS[@]}"
+print_list "Protected digests" "${PROTECTED_DIGESTS[@]}"
+print_list "Delete candidate tags" "${DELETE_TAGS[@]}"
+print_list "Delete candidate digests" "${DELETE_DIGESTS[@]}"
 if [[ "${DRY_RUN}" == "true" ]]; then
   print_list "Deleted tags" "dry-run only"
   print_list "Deleted digests" "dry-run only"
 else
-  print_list "Deleted tags" "${DELETED_TAGS[@]-}"
-  print_list "Deleted digests" "${DELETED_DIGESTS[@]-}"
+  print_list "Deleted tags" "${DELETED_TAGS[@]}"
+  print_list "Deleted digests" "${DELETED_DIGESTS[@]}"
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
@@ -284,15 +290,15 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo
   } >> "${GITHUB_STEP_SUMMARY}"
 
-  append_summary_list "Protected tags" "${KEEP_TAGS[@]-}"
-  append_summary_list "Protected digests" "${PROTECTED_DIGESTS[@]-}"
-  append_summary_list "Delete candidate tags" "${DELETE_TAGS[@]-}"
-  append_summary_list "Delete candidate digests" "${DELETE_DIGESTS[@]-}"
+  append_summary_list "Protected tags" "${KEEP_TAGS[@]}"
+  append_summary_list "Protected digests" "${PROTECTED_DIGESTS[@]}"
+  append_summary_list "Delete candidate tags" "${DELETE_TAGS[@]}"
+  append_summary_list "Delete candidate digests" "${DELETE_DIGESTS[@]}"
   if [[ "${DRY_RUN}" == "true" ]]; then
     append_summary_list "Deleted tags" "dry-run only"
     append_summary_list "Deleted digests" "dry-run only"
   else
-    append_summary_list "Deleted tags" "${DELETED_TAGS[@]-}"
-    append_summary_list "Deleted digests" "${DELETED_DIGESTS[@]-}"
+    append_summary_list "Deleted tags" "${DELETED_TAGS[@]}"
+    append_summary_list "Deleted digests" "${DELETED_DIGESTS[@]}"
   fi
 fi
