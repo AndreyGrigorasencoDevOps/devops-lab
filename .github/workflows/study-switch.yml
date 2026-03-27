@@ -104,13 +104,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      ARM_USE_OIDC: true
-      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
       RBAC_PROPAGATION_WAIT_SECONDS: "45"
-      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -120,25 +114,24 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the dev study switch job" \
+            --export-arm-env \
+            --export-tf-env \
+            --rbac-propagation-wait-seconds "${RBAC_PROPAGATION_WAIT_SECONDS}"
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Export Terraform variables
-        run: |
-          set -euo pipefail
-          echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
-
-          if [[ -n "${APP_ENV_VARS_JSON:-}" ]]; then
-            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "${SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY:-}" ]]; then
-            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
-          fi
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Run study switch (dev)
         run: |
@@ -166,13 +159,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      ARM_USE_OIDC: true
-      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
       RBAC_PROPAGATION_WAIT_SECONDS: "45"
-      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -182,25 +169,24 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the prod study switch job" \
+            --export-arm-env \
+            --export-tf-env \
+            --rbac-propagation-wait-seconds "${RBAC_PROPAGATION_WAIT_SECONDS}"
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Export Terraform variables
-        run: |
-          set -euo pipefail
-          echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
-
-          if [[ -n "${APP_ENV_VARS_JSON:-}" ]]; then
-            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "${SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY:-}" ]]; then
-            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
-          fi
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Run study switch (prod)
         run: |

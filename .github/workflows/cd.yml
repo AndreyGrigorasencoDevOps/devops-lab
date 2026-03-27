@@ -114,19 +114,33 @@ jobs:
       source_digest: ${{ steps.resolve.outputs.digest }}
       source_image: ${{ steps.resolve.outputs.source_image }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "resolving the prod source image" \
+            --require-acr-name \
+            --require-acr-login-server
+
       - name: Azure login (OIDC, DEV)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Resolve digest from DEV ACR
         id: resolve
         run: |
           set -euo pipefail
           DIGEST=$(az acr manifest show-metadata \
-            --registry "${{ vars.ACR_NAME }}" \
+            --registry "${{ steps.workflow_vars.outputs.acr_name }}" \
             --name "${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" \
             --query digest -o tsv)
 
@@ -135,7 +149,7 @@ jobs:
             exit 1
           fi
 
-          SOURCE_IMAGE="${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+          SOURCE_IMAGE="${{ steps.workflow_vars.outputs.acr_login_server }}/${{ env.IMAGE_NAME }}@${DIGEST}"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "source_image=$SOURCE_IMAGE" >> "$GITHUB_OUTPUT"
 
@@ -149,18 +163,31 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "promoting the prod image" \
+            --require-acr-name
+
       - name: Azure login (OIDC, PROD)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Import image by digest into PROD ACR
         run: |
           set -euo pipefail
           az acr import \
-            --name "${{ vars.ACR_NAME }}" \
+            --name "${{ steps.workflow_vars.outputs.acr_name }}" \
             --source "${{ needs.resolve-prod-source.outputs.source_image }}" \
             --image "${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" \
             --force
@@ -169,7 +196,7 @@ jobs:
         run: |
           set -euo pipefail
           PROD_DIGEST=$(az acr manifest show-metadata \
-            --registry "${{ vars.ACR_NAME }}" \
+            --registry "${{ steps.workflow_vars.outputs.acr_name }}" \
             --name "${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" \
             --query digest -o tsv)
 
@@ -214,12 +241,24 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the shared runner control plane"
+
       - name: Azure login (OIDC, DEV runner control plane)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Ensure shared runner VM exists
         run: |
@@ -330,13 +369,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      ARM_USE_OIDC: true
-      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
       RBAC_PROPAGATION_WAIT_SECONDS: "45"
-      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -346,29 +379,25 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the dev Terraform job" \
+            --export-arm-env \
+            --export-tf-env \
+            --rbac-propagation-wait-seconds "${RBAC_PROPAGATION_WAIT_SECONDS}" \
+            --container-image-tag "${{ inputs.image_tag }}"
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Export Terraform variables
-        run: |
-          set -euo pipefail
-          echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
-
-          if [[ "${{ inputs.action }}" != "destroy" ]]; then
-            echo "TF_VAR_container_image_tag=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "$APP_ENV_VARS_JSON" ]]; then
-            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" ]]; then
-            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
-          fi
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
@@ -464,13 +493,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      ARM_USE_OIDC: true
-      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
       RBAC_PROPAGATION_WAIT_SECONDS: "45"
-      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -480,25 +503,24 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the dev destroy job" \
+            --export-arm-env \
+            --export-tf-env \
+            --rbac-propagation-wait-seconds "${RBAC_PROPAGATION_WAIT_SECONDS}"
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Export Terraform variables
-        run: |
-          set -euo pipefail
-          echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
-
-          if [[ -n "$APP_ENV_VARS_JSON" ]]; then
-            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" ]]; then
-            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
-          fi
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/dev.hcl -reconfigure
@@ -622,13 +644,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      ARM_USE_OIDC: true
-      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
       RBAC_PROPAGATION_WAIT_SECONDS: "45"
-      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -638,26 +654,25 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the prod Terraform job" \
+            --export-arm-env \
+            --export-tf-env \
+            --rbac-propagation-wait-seconds "${RBAC_PROPAGATION_WAIT_SECONDS}" \
+            --container-image-tag "${{ inputs.image_tag }}"
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Export Terraform variables
-        run: |
-          set -euo pipefail
-          echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
-          echo "TF_VAR_container_image_tag=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
-
-          if [[ -n "$APP_ENV_VARS_JSON" ]]; then
-            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" ]]; then
-            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
-          fi
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
@@ -750,13 +765,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      ARM_USE_OIDC: true
-      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      APP_ENV_VARS_JSON: ${{ vars.TF_APP_ENV_VARS_JSON }}
       RBAC_PROPAGATION_WAIT_SECONDS: "45"
-      SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY: ${{ vars.TF_SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -766,24 +775,24 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the prod destroy job" \
+            --export-arm-env \
+            --export-tf-env \
+            --rbac-propagation-wait-seconds "${RBAC_PROPAGATION_WAIT_SECONDS}"
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Export Terraform variables
-        run: |
-          set -euo pipefail
-          echo "TF_VAR_rbac_propagation_wait_seconds=${RBAC_PROPAGATION_WAIT_SECONDS}" >> "$GITHUB_ENV"
-          if [[ -n "$APP_ENV_VARS_JSON" ]]; then
-            echo "TF_VAR_app_env_vars=$APP_ENV_VARS_JSON" >> "$GITHUB_ENV"
-          fi
-
-          if [[ -n "$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" ]]; then
-            echo "TF_VAR_shared_runner_admin_ssh_public_key=$SHARED_RUNNER_ADMIN_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
-          fi
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Terraform init
         run: terraform -chdir=${{ env.TERRAFORM_DIR }} init -backend-config=backend/prod.hcl -reconfigure
@@ -907,12 +916,24 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the shared runner cleanup job"
+
       - name: Azure login (OIDC, DEV runner control plane)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Deallocate shared runner VM
         run: |
