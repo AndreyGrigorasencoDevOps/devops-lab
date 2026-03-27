@@ -34,6 +34,7 @@
   "overrides": {
     "flatted": "3.4.2",
     "minimatch": ">=10.2.4",
+    "path-to-regexp": "0.1.13",
     "picomatch": "2.3.2"
   }
 }

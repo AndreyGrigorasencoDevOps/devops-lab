@@ -1,0 +1,198 @@
+name: Study Switch
+run-name: Study Switch | env=${{ inputs.environment }} | op=${{ inputs.operation }} | warm=${{ inputs.warm_apps }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+          - both
+      operation:
+        description: "Study switch action"
+        required: true
+        type: choice
+        options:
+          - wake
+          - sleep
+          - reset
+      warm_apps:
+        description: "When waking, poll the public /ready endpoint after the database is available."
+        required: false
+        type: boolean
+        default: true
+      confirm_reset:
+        description: "Required value RESET when operation=reset."
+        required: false
+        type: string
+
+concurrency:
+  group: platform-control-plane
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_DIR: terraform
+
+jobs:
+  validate-inputs:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validate reset confirmation
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.operation }}" == "reset" && "${{ inputs.confirm_reset }}" != "RESET" ]]; then
+            echo "::error::confirm_reset must equal 'RESET' when operation is 'reset'."
+            exit 1
+          fi
+
+      - name: Publish switch summary
+        run: |
+          set -euo pipefail
+
+          echo "## Study Switch Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Parameter | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Operation | \`${{ inputs.operation }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Warm apps | \`${{ inputs.warm_apps }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          case "${{ inputs.operation }}" in
+            wake)
+              echo "Wake starts PostgreSQL if it exists, recreates the DB slice if it was reset, and optionally polls \`/ready\`." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            sleep)
+              echo "Sleep stops PostgreSQL compute only for faster resume later." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            reset)
+              echo "Reset destroys only the PostgreSQL slice. This removes DB compute, storage, and automated backup charges, but it is destructive." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
+
+  prod-reset-approval-gate:
+    name: Prod reset approval gate
+    if: inputs.operation == 'reset' && (inputs.environment == 'prod' || inputs.environment == 'both')
+    needs: [validate-inputs]
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Confirm prod reset approval
+        run: echo "Prod reset approval granted."
+
+  study-switch-dev:
+    name: Study switch (dev)
+    if: >-
+      ${{
+        !cancelled() &&
+        needs.validate-inputs.result == 'success' &&
+        (inputs.environment == 'dev' || inputs.environment == 'both')
+      }}
+    needs: [validate-inputs]
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RBAC_PROPAGATION_WAIT_SECONDS: "45"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the dev study switch job" \
+            --export-arm-env \
+            --export-tf-env \
+            --rbac-propagation-wait-seconds "${RBAC_PROPAGATION_WAIT_SECONDS}"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
+
+      - name: Run study switch (dev)
+        run: |
+          set -euo pipefail
+          ./scripts/study-switch.sh \
+            --environment dev \
+            --operation "${{ inputs.operation }}" \
+            --warm-app "${{ inputs.warm_apps }}" \
+            --confirm-reset "${{ inputs.confirm_reset }}"
+
+  study-switch-prod:
+    name: Study switch (prod)
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.validate-inputs.result == 'success' &&
+        (inputs.environment == 'prod' || inputs.environment == 'both') &&
+        (inputs.operation != 'reset' || needs.prod-reset-approval-gate.result == 'success')
+      }}
+    needs: [validate-inputs, prod-reset-approval-gate]
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RBAC_PROPAGATION_WAIT_SECONDS: "45"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the prod study switch job" \
+            --export-arm-env \
+            --export-tf-env \
+            --rbac-propagation-wait-seconds "${RBAC_PROPAGATION_WAIT_SECONDS}"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
+
+      - name: Run study switch (prod)
+        run: |
+          set -euo pipefail
+          ./scripts/study-switch.sh \
+            --environment prod \
+            --operation "${{ inputs.operation }}" \
+            --warm-app "${{ inputs.warm_apps }}" \
+            --confirm-reset "${{ inputs.confirm_reset }}"

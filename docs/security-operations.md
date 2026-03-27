@@ -95,8 +95,22 @@ Source of truth:
   - PROD: active tag + latest 10 additional `sha-*` tags, age threshold 30 days
 - Do not run manual cleanup during an active prod deployment window.
 
+## 5.2) Study switch cadence
+
+- Use `.github/workflows/study-switch.yml` when you want to pause or remove only the PostgreSQL slice outside normal CD activity.
+- Preferred operator pattern:
+  - use `sleep` for short gaps so wake-up is fast
+  - use `reset` for longer breaks when you want PostgreSQL storage and automated backup charges gone too
+  - use `wake` before studying if the DB was stopped or reset
+- `reset` is destructive:
+  - it removes only the PostgreSQL server, database, and optional firewall rule
+  - it does not remove the rest of the environment
+  - it requires `confirm_reset=RESET`
+- `prod` reset remains approval-gated through the GitHub `prod` environment.
+
 ## 6) Break-glass posture
 
 - Run break-glass Terraform from `ubuntu-latest` or a trusted local shell, not from a self-hosted runner that is being replaced.
 - Add a temporary `/32` allowlist only for bootstrap or incident response steps that need public Key Vault access.
 - Restore the hardened `firewall` / `bypass = None` posture as soon as the incident is closed.
+- The study switch reuses this temporary Key Vault allowlist pattern only when hosted-runner targeted Terraform DB actions are required.
