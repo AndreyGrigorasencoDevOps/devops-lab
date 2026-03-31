@@ -53,6 +53,36 @@ jobs:
         with:
           fail-on-severity: high
 
+  automation-lint:
+    name: Automation lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.8"
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -o /tmp/actionlint.tar.gz
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          /tmp/actionlint -version
+
+      - name: Run actionlint
+        run: /tmp/actionlint
+
+      - name: Run shellcheck
+        run: shellcheck -x scripts/*.sh
+
   quality:
     name: Quality (Node 24)
     runs-on: ubuntu-latest
@@ -203,27 +233,32 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [pr-title, dependency-review, quality, trivy, smoke]
+    needs: [pr-title, dependency-review, automation-lint, quality, trivy, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      PR_SOURCE_BRANCH: ${{ github.head_ref }}
     steps:
       - name: Publish PR CI summary
         run: |
-          echo "## CI (PR) Execution Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Event | \`${{ github.event_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| PR | \`#${{ github.event.pull_request.number }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Source branch | \`${{ github.head_ref }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| PR title check | \`${{ needs.pr-title.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Dependency review | \`${{ needs.dependency-review.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Quality (lint/test/sonar/audit) | \`${{ needs.quality.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Trivy | \`${{ needs.trivy.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Docker smoke | \`${{ needs.smoke.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Quality runs on Node 24." >> "$GITHUB_STEP_SUMMARY"
-          echo "Docker smoke validates the default \`node:24-alpine\` image." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Sonar scan runs when \`SONAR_TOKEN\` exists and PR is from this repository." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## CI (PR) Execution Summary"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Event | \`${{ github.event_name }}\` |"
+            echo "| PR | \`#${{ github.event.pull_request.number }}\` |"
+            echo "| Source branch | \`${PR_SOURCE_BRANCH}\` |"
+            echo "| PR title check | \`${{ needs.pr-title.result }}\` |"
+            echo "| Dependency review | \`${{ needs.dependency-review.result }}\` |"
+            echo "| Automation lint | \`${{ needs.automation-lint.result }}\` |"
+            echo "| Quality (lint/test/sonar/audit) | \`${{ needs.quality.result }}\` |"
+            echo "| Trivy | \`${{ needs.trivy.result }}\` |"
+            echo "| Docker smoke | \`${{ needs.smoke.result }}\` |"
+            echo ""
+            echo "Quality runs on Node 24."
+            echo "Docker smoke validates the default \`node:24-alpine\` image."
+            echo ""
+            echo "Sonar scan runs when \`SONAR_TOKEN\` exists and PR is from this repository."
+          } >> "$GITHUB_STEP_SUMMARY"

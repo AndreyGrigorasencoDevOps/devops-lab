@@ -90,6 +90,7 @@ Source of truth:
 - Use `.github/workflows/acr-cleanup.yml` to prune old immutable ACR tags safely.
 - Run a manual dry-run before the first live cleanup and after any retention-policy change.
 - The workflow protects the currently deployed Container App tag in each environment before deleting anything.
+- The cleanup script retries transient Azure CLI and ACR auth/service failures, but still fails the job if metadata cannot be trusted after bounded retries.
 - Current retention targets:
   - DEV: active tag + latest 5 additional `sha-*` tags, age threshold 7 days
   - PROD: active tag + latest 10 additional `sha-*` tags, age threshold 30 days
@@ -103,7 +104,8 @@ Source of truth:
   - use `reset` for longer breaks when you want PostgreSQL storage and automated backup charges gone too
   - use `wake` before studying if the DB was stopped or reset
 - `reset` is destructive:
-  - it removes only the PostgreSQL server, database, and optional firewall rule
+  - it deletes the PostgreSQL server directly in Azure rather than using Terraform targeted destroy
+  - it preserves the shared Terraform random suffix so the next recreate does not force unrelated ACR or PostgreSQL renames
   - it does not remove the rest of the environment
   - it requires `confirm_reset=RESET`
 - `prod` reset remains approval-gated through the GitHub `prod` environment.

@@ -56,26 +56,28 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "## Study Switch Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Parameter | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Environment | \`${{ inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Operation | \`${{ inputs.operation }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Warm apps | \`${{ inputs.warm_apps }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Study Switch Summary"
+            echo ""
+            echo "| Parameter | Value |"
+            echo "| --- | --- |"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
+            echo "| Operation | \`${{ inputs.operation }}\` |"
+            echo "| Warm apps | \`${{ inputs.warm_apps }}\` |"
+            echo ""
 
-          case "${{ inputs.operation }}" in
-            wake)
-              echo "Wake starts PostgreSQL if it exists, recreates the DB slice if it was reset, and optionally polls \`/ready\`." >> "$GITHUB_STEP_SUMMARY"
-              ;;
-            sleep)
-              echo "Sleep stops PostgreSQL compute only for faster resume later." >> "$GITHUB_STEP_SUMMARY"
-              ;;
-            reset)
-              echo "Reset destroys only the PostgreSQL slice. This removes DB compute, storage, and automated backup charges, but it is destructive." >> "$GITHUB_STEP_SUMMARY"
-              ;;
-          esac
+            case "${{ inputs.operation }}" in
+              wake)
+                echo "Wake starts PostgreSQL if it exists, recreates the DB slice if it was reset, and optionally polls \`/ready\`."
+                ;;
+              sleep)
+                echo "Sleep stops PostgreSQL compute only for faster resume later."
+                ;;
+              reset)
+                echo "Reset destroys only the PostgreSQL slice. This removes DB compute, storage, and automated backup charges, but it is destructive."
+                ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
 
   prod-reset-approval-gate:
     name: Prod reset approval gate

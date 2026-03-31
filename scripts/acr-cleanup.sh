@@ -17,6 +17,15 @@ require_env() {
   fi
 }
 
+warn() {
+  printf '::warning::%s\n' "$*" >&2
+}
+
+fail() {
+  printf '::error::%s\n' "$*" >&2
+  exit 1
+}
+
 print_list() {
   local label="$1"
   shift
@@ -59,6 +68,137 @@ append_summary_list() {
   printf -- "- %s: \`%s\`\n" "${label}" "$(printf '%s, ' "$@" | sed 's/, $//')" >> "${GITHUB_STEP_SUMMARY}"
 }
 
+json_array_from_array() {
+  local array_name="$1"
+  local restore_nounset="false"
+
+  case "$-" in
+    *u*)
+      restore_nounset="true"
+      set +u
+      ;;
+  esac
+
+  # shellcheck disable=SC2294
+  eval "set -- \"\${${array_name}[@]}\""
+
+  if [[ "${restore_nounset}" == "true" ]]; then
+    set -u
+  fi
+
+  if [[ "$#" -eq 0 ]]; then
+    jq -nc '[]'
+    return
+  fi
+
+  jq -nc '$ARGS.positional | map(select(length > 0))' --args "$@"
+}
+
+print_array_list() {
+  local label="$1"
+  local array_name="$2"
+  local restore_nounset="false"
+
+  case "$-" in
+    *u*)
+      restore_nounset="true"
+      set +u
+      ;;
+  esac
+
+  # shellcheck disable=SC2294
+  eval "set -- \"\${${array_name}[@]}\""
+
+  if [[ "${restore_nounset}" == "true" ]]; then
+    set -u
+  fi
+
+  print_list "${label}" "$@"
+}
+
+append_summary_array_list() {
+  local label="$1"
+  local array_name="$2"
+  local restore_nounset="false"
+
+  case "$-" in
+    *u*)
+      restore_nounset="true"
+      set +u
+      ;;
+  esac
+
+  # shellcheck disable=SC2294
+  eval "set -- \"\${${array_name}[@]}\""
+
+  if [[ "${restore_nounset}" == "true" ]]; then
+    set -u
+  fi
+
+  append_summary_list "${label}" "$@"
+}
+
+normalize_cli_output() {
+  local file_path="$1"
+  tr '\n' ' ' <"${file_path}" | sed 's/[[:space:]]\+/ /g'
+}
+
+is_retryable_azure_error() {
+  local error_text="$1"
+  printf '%s' "${error_text}" | grep -qiE 'HTTP Error: 5[0-9][0-9]|StatusCode: 5[0-9][0-9]|MsalServiceError|TooManyRequests|HTTP Error: 429|StatusCode: 429|timed out|timeout|temporarily unavailable|Temporary failure|connection reset|connection aborted|EOF|try again'
+}
+
+run_with_retry() {
+  local description="$1"
+  shift
+
+  local max_attempts="${AZURE_CLI_RETRY_ATTEMPTS:-4}"
+  local delay_seconds="${AZURE_CLI_RETRY_INITIAL_DELAY_SECONDS:-5}"
+  local attempt
+  local status
+  local stdout_file
+  local stderr_file
+  local stdout_text
+  local stderr_text
+  local combined_text
+  local attempt_context
+
+  for attempt in $(seq 1 "${max_attempts}"); do
+    stdout_file="$(mktemp)"
+    stderr_file="$(mktemp)"
+
+    if "$@" >"${stdout_file}" 2>"${stderr_file}"; then
+      cat "${stdout_file}"
+      if [[ -s "${stderr_file}" ]]; then
+        cat "${stderr_file}" >&2
+      fi
+      rm -f "${stdout_file}" "${stderr_file}"
+      return 0
+    else
+      status=$?
+    fi
+
+    stdout_text="$(normalize_cli_output "${stdout_file}")"
+    stderr_text="$(normalize_cli_output "${stderr_file}")"
+    combined_text="$(printf '%s %s' "${stderr_text}" "${stdout_text}" | sed 's/[[:space:]]\+/ /g' | sed 's/^ //; s/ $//')"
+    rm -f "${stdout_file}" "${stderr_file}"
+
+    if (( attempt > 1 )); then
+      attempt_context=" after ${attempt} attempts"
+    else
+      attempt_context=""
+    fi
+
+    if (( attempt == max_attempts )) || ! is_retryable_azure_error "${combined_text}"; then
+      fail "${description} failed${attempt_context} (exit ${status}): ${combined_text:-no diagnostic output}"
+    fi
+
+    warn "${description} failed on attempt ${attempt}/${max_attempts} (exit ${status}): ${combined_text:-no diagnostic output}. Retrying in ${delay_seconds}s."
+    sleep "${delay_seconds}"
+    delay_seconds=$(( delay_seconds * 2 ))
+  done
+}
+
 require_command az
 require_command jq
 require_command python3
@@ -74,8 +214,7 @@ require_env MIN_AGE_DAYS
 DRY_RUN="${DRY_RUN:-true}"
 
 if [[ "${DRY_RUN}" != "true" && "${DRY_RUN}" != "false" ]]; then
-  echo "::error::DRY_RUN must be 'true' or 'false'."
-  exit 1
+  fail "DRY_RUN must be 'true' or 'false'."
 fi
 
 ACTIVE_IMAGE="$(
@@ -87,37 +226,43 @@ ACTIVE_IMAGE="$(
 )"
 
 if [[ -z "${ACTIVE_IMAGE}" ]]; then
-  echo "::error::Unable to resolve the active image for ${CONTAINER_APP_NAME}."
-  exit 1
+  fail "Unable to resolve the active image for ${CONTAINER_APP_NAME}."
 fi
 
 if [[ "${ACTIVE_IMAGE}" != *:* ]]; then
-  echo "::error::Active image '${ACTIVE_IMAGE}' does not contain a tag reference."
-  exit 1
+  fail "Active image '${ACTIVE_IMAGE}' does not contain a tag reference."
 fi
 
 ACTIVE_TAG="${ACTIVE_IMAGE##*:}"
+MANIFEST_METADATA_JSON="$(
+  run_with_retry \
+    "Listing ACR manifest metadata for ${ACR_NAME}/${IMAGE_REPOSITORY}" \
+    az acr manifest list-metadata \
+      --registry "${ACR_NAME}" \
+      --name "${IMAGE_REPOSITORY}" \
+      --orderby time_desc \
+      -o json
+)"
+
 TAG_DETAILS_JSON="$(
-  az acr repository show-tags \
-    --name "${ACR_NAME}" \
-    --repository "${IMAGE_REPOSITORY}" \
-    --detail \
-    --orderby time_desc \
-    -o json
+  jq -c '
+    [
+      .[] |
+      select(.digest != null) |
+      . as $manifest |
+      ($manifest.tags // [])[] |
+      {
+        name: .,
+        digest: $manifest.digest,
+        lastUpdateTime: $manifest.lastUpdateTime
+      }
+    ]
+  ' <<<"${MANIFEST_METADATA_JSON}"
 )"
 
 if ! jq -e --arg active_tag "${ACTIVE_TAG}" '.[] | select(.name == $active_tag)' >/dev/null <<<"${TAG_DETAILS_JSON}"; then
-  echo "::error::Active tag '${ACTIVE_TAG}' is not present in ${ACR_NAME}/${IMAGE_REPOSITORY}. Aborting cleanup."
-  exit 1
+  fail "Active tag '${ACTIVE_TAG}' is not present in ${ACR_NAME}/${IMAGE_REPOSITORY}. Aborting cleanup."
 fi
-
-MANIFEST_METADATA_JSON="$(
-  az acr manifest list-metadata \
-    --registry "${ACR_NAME}" \
-    --name "${IMAGE_REPOSITORY}" \
-    --orderby time_desc \
-    -o json
-)"
 
 SHA_TAGS=()
 while IFS= read -r tag; do
@@ -146,16 +291,18 @@ PY
 KEEP_TAGS=("${ACTIVE_TAG}")
 
 KEPT_RECENT_COUNT=0
-for tag in "${SHA_TAGS[@]}"; do
-  if [[ "${tag}" == "${ACTIVE_TAG}" ]]; then
-    continue
-  fi
+if (( ${#SHA_TAGS[@]} > 0 )); then
+  for tag in "${SHA_TAGS[@]}"; do
+    if [[ "${tag}" == "${ACTIVE_TAG}" ]]; then
+      continue
+    fi
 
-  if (( KEPT_RECENT_COUNT < KEEP_LATEST_INT )); then
-    KEEP_TAGS+=("${tag}")
-    KEPT_RECENT_COUNT=$((KEPT_RECENT_COUNT + 1))
-  fi
-done
+    if (( KEPT_RECENT_COUNT < KEEP_LATEST_INT )); then
+      KEEP_TAGS+=("${tag}")
+      KEPT_RECENT_COUNT=$(( KEPT_RECENT_COUNT + 1 ))
+    fi
+  done
+fi
 
 OLD_SHA_TAGS=()
 while IFS= read -r tag; do
@@ -171,18 +318,20 @@ done < <(
 )
 
 DELETE_TAGS=()
-for tag in "${OLD_SHA_TAGS[@]}"; do
-  if [[ -z "${tag}" ]]; then
-    continue
-  fi
+if (( ${#OLD_SHA_TAGS[@]} > 0 )); then
+  for tag in "${OLD_SHA_TAGS[@]}"; do
+    if [[ -z "${tag}" ]]; then
+      continue
+    fi
 
-  if ! array_contains "${tag}" "${KEEP_TAGS[@]}"; then
-    DELETE_TAGS+=("${tag}")
-  fi
-done
+    if ! array_contains "${tag}" "${KEEP_TAGS[@]}"; then
+      DELETE_TAGS+=("${tag}")
+    fi
+  done
+fi
 
-PROTECTED_TAGS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${KEEP_TAGS[@]}")"
-DELETE_TAGS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${DELETE_TAGS[@]}")"
+PROTECTED_TAGS_JSON="$(json_array_from_array KEEP_TAGS)"
+DELETE_TAGS_JSON="$(json_array_from_array DELETE_TAGS)"
 
 PROTECTED_DIGESTS=()
 PROTECTED_DIGESTS_RAW="$(
@@ -200,7 +349,7 @@ while IFS= read -r digest; do
   PROTECTED_DIGESTS+=("${digest}")
 done <<<"${PROTECTED_DIGESTS_RAW}"
 
-PROTECTED_DIGESTS_JSON="$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${PROTECTED_DIGESTS[@]}")"
+PROTECTED_DIGESTS_JSON="$(json_array_from_array PROTECTED_DIGESTS)"
 
 DELETE_DIGESTS=()
 DELETE_DIGESTS_RAW="$(
@@ -212,7 +361,7 @@ DELETE_DIGESTS_RAW="$(
       select(($manifest.tags // []) | length > 0) |
       select(($protected_digests | index($manifest.digest)) == null) |
       select(($manifest.tags // []) | map(test("^sha-")) | all) |
-      select(((($manifest.tags // []) - $delete_tags) | length) == 0) |
+      select((((($manifest.tags // []) - $delete_tags) | length) == 0)) |
       $manifest.digest
     ' <<<"${MANIFEST_METADATA_JSON}"
 )"
@@ -226,7 +375,7 @@ done <<<"${DELETE_DIGESTS_RAW}"
 DELETED_TAGS=()
 DELETED_TAGS_RAW="$(
   jq -r \
-    --argjson delete_digests "$(jq -nc '$ARGS.positional | map(select(length > 0))' --args "${DELETE_DIGESTS[@]}")" '
+    --argjson delete_digests "$(json_array_from_array DELETE_DIGESTS)" '
       .[] as $manifest |
       select($manifest.digest != null) |
       select(($delete_digests | index($manifest.digest)) != null) |
@@ -242,17 +391,21 @@ done <<<"${DELETED_TAGS_RAW}"
 
 DELETED_DIGESTS=()
 if [[ "${DRY_RUN}" == "false" ]]; then
-  for digest in "${DELETE_DIGESTS[@]}"; do
-    if [[ -z "${digest}" ]]; then
-      continue
-    fi
+  if (( ${#DELETE_DIGESTS[@]} > 0 )); then
+    for digest in "${DELETE_DIGESTS[@]}"; do
+      if [[ -z "${digest}" ]]; then
+        continue
+      fi
 
-    az acr manifest delete \
-      --registry "${ACR_NAME}" \
-      --name "${IMAGE_REPOSITORY}@${digest}" \
-      --yes
-    DELETED_DIGESTS+=("${digest}")
-  done
+      run_with_retry \
+        "Deleting ACR manifest ${IMAGE_REPOSITORY}@${digest}" \
+        az acr manifest delete \
+          --registry "${ACR_NAME}" \
+          --name "${IMAGE_REPOSITORY}@${digest}" \
+          --yes >/dev/null
+      DELETED_DIGESTS+=("${digest}")
+    done
+  fi
 fi
 
 echo "Environment: ${CLEANUP_ENV_LABEL}"
@@ -261,16 +414,16 @@ echo "Container App: ${CONTAINER_APP_NAME}"
 echo "Mode: $( [[ "${DRY_RUN}" == "true" ]] && echo "dry-run" || echo "live" )"
 echo "Active image: ${ACTIVE_IMAGE}"
 echo "Active tag: ${ACTIVE_TAG}"
-print_list "Protected tags" "${KEEP_TAGS[@]}"
-print_list "Protected digests" "${PROTECTED_DIGESTS[@]}"
-print_list "Delete candidate tags" "${DELETE_TAGS[@]}"
-print_list "Delete candidate digests" "${DELETE_DIGESTS[@]}"
+print_array_list "Protected tags" KEEP_TAGS
+print_array_list "Protected digests" PROTECTED_DIGESTS
+print_array_list "Delete candidate tags" DELETE_TAGS
+print_array_list "Delete candidate digests" DELETE_DIGESTS
 if [[ "${DRY_RUN}" == "true" ]]; then
   print_list "Deleted tags" "dry-run only"
   print_list "Deleted digests" "dry-run only"
 else
-  print_list "Deleted tags" "${DELETED_TAGS[@]}"
-  print_list "Deleted digests" "${DELETED_DIGESTS[@]}"
+  print_array_list "Deleted tags" DELETED_TAGS
+  print_array_list "Deleted digests" DELETED_DIGESTS
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
@@ -290,15 +443,15 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo
   } >> "${GITHUB_STEP_SUMMARY}"
 
-  append_summary_list "Protected tags" "${KEEP_TAGS[@]}"
-  append_summary_list "Protected digests" "${PROTECTED_DIGESTS[@]}"
-  append_summary_list "Delete candidate tags" "${DELETE_TAGS[@]}"
-  append_summary_list "Delete candidate digests" "${DELETE_DIGESTS[@]}"
+  append_summary_array_list "Protected tags" KEEP_TAGS
+  append_summary_array_list "Protected digests" PROTECTED_DIGESTS
+  append_summary_array_list "Delete candidate tags" DELETE_TAGS
+  append_summary_array_list "Delete candidate digests" DELETE_DIGESTS
   if [[ "${DRY_RUN}" == "true" ]]; then
     append_summary_list "Deleted tags" "dry-run only"
     append_summary_list "Deleted digests" "dry-run only"
   else
-    append_summary_list "Deleted tags" "${DELETED_TAGS[@]}"
-    append_summary_list "Deleted digests" "${DELETED_DIGESTS[@]}"
+    append_summary_array_list "Deleted tags" DELETED_TAGS
+    append_summary_array_list "Deleted digests" DELETED_DIGESTS
   fi
 fi
