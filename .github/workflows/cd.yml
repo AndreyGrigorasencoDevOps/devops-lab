@@ -81,25 +81,27 @@ jobs:
             IMAGE_TAG="n/a"
           fi
 
-          echo "## CD Execution Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Parameter | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Environment | \`${{ inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Terraform action | \`${{ inputs.action }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Image tag | \`$IMAGE_TAG\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Bootstrap mode | \`${{ inputs.bootstrap_mode }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Backend config | \`$BACKEND_FILE\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Var file | \`$VAR_FILE\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          if [[ "${{ inputs.environment }}" == "prod" && "${{ inputs.action }}" != "destroy" ]]; then
-            echo "This run will promote image by digest from DEV ACR to PROD ACR before Terraform." >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [[ "${{ inputs.bootstrap_mode }}" == "true" ]]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "Bootstrap mode will pre-create Terraform-managed env prerequisites before the normal preflight." >> "$GITHUB_STEP_SUMMARY"
-            echo "Shared runner infrastructure must already exist, and \`${{ inputs.environment }}-db-password\` still must be present in the env Key Vault." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo "## CD Execution Summary"
+            echo ""
+            echo "| Parameter | Value |"
+            echo "| --- | --- |"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
+            echo "| Terraform action | \`${{ inputs.action }}\` |"
+            echo "| Image tag | \`$IMAGE_TAG\` |"
+            echo "| Bootstrap mode | \`${{ inputs.bootstrap_mode }}\` |"
+            echo "| Backend config | \`$BACKEND_FILE\` |"
+            echo "| Var file | \`$VAR_FILE\` |"
+            echo ""
+            if [[ "${{ inputs.environment }}" == "prod" && "${{ inputs.action }}" != "destroy" ]]; then
+              echo "This run will promote image by digest from DEV ACR to PROD ACR before Terraform."
+            fi
+            if [[ "${{ inputs.bootstrap_mode }}" == "true" ]]; then
+              echo ""
+              echo "Bootstrap mode will pre-create Terraform-managed env prerequisites before the normal preflight."
+              echo "Shared runner infrastructure must already exist, and \`${{ inputs.environment }}-db-password\` still must be present in the env Key Vault."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   resolve-prod-source:
     name: Resolve source image in DEV ACR
@@ -283,7 +285,7 @@ jobs:
           set -euo pipefail
 
           max_attempts=$(( RUNNER_BOOT_TIMEOUT_SECONDS / RUNNER_POLL_INTERVAL_SECONDS ))
-          for attempt in $(seq 1 "$max_attempts"); do
+          for _ in $(seq 1 "$max_attempts"); do
             power_state="$(az vm get-instance-view \
               --resource-group "${{ env.SHARED_RUNNER_RESOURCE_GROUP }}" \
               --name "${{ env.SHARED_RUNNER_VM_NAME }}" \
@@ -315,7 +317,7 @@ jobs:
           required_labels_json="$(jq -cn --arg labels "${SHARED_RUNNER_REQUIRED_LABELS}" '$labels | split(",")')"
           max_attempts=$(( RUNNER_BOOT_TIMEOUT_SECONDS / RUNNER_POLL_INTERVAL_SECONDS ))
 
-          for attempt in $(seq 1 "$max_attempts"); do
+          for _ in $(seq 1 "$max_attempts"); do
             api_output=""
             api_error_file="$(mktemp)"
             if ! api_output="$(gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runners?per_page=100" 2>"${api_error_file}")"; then
@@ -575,9 +577,11 @@ jobs:
               -o tsv
           )"
 
-          echo "BREAK_GLASS_KEY_VAULT_NAME=${KV_NAME}" >> "$GITHUB_ENV"
-          echo "BREAK_GLASS_KEY_VAULT_RG=${KV_RG}" >> "$GITHUB_ENV"
-          echo "RUNNER_PUBLIC_IP=${RUNNER_PUBLIC_IP}" >> "$GITHUB_ENV"
+          {
+            echo "BREAK_GLASS_KEY_VAULT_NAME=${KV_NAME}"
+            echo "BREAK_GLASS_KEY_VAULT_RG=${KV_RG}"
+            echo "RUNNER_PUBLIC_IP=${RUNNER_PUBLIC_IP}"
+          } >> "$GITHUB_ENV"
 
           if [[ "${PREEXISTING_RULE_COUNT}" == "1" ]]; then
             echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=true" >> "$GITHUB_ENV"
@@ -847,9 +851,11 @@ jobs:
               -o tsv
           )"
 
-          echo "BREAK_GLASS_KEY_VAULT_NAME=${KV_NAME}" >> "$GITHUB_ENV"
-          echo "BREAK_GLASS_KEY_VAULT_RG=${KV_RG}" >> "$GITHUB_ENV"
-          echo "RUNNER_PUBLIC_IP=${RUNNER_PUBLIC_IP}" >> "$GITHUB_ENV"
+          {
+            echo "BREAK_GLASS_KEY_VAULT_NAME=${KV_NAME}"
+            echo "BREAK_GLASS_KEY_VAULT_RG=${KV_RG}"
+            echo "RUNNER_PUBLIC_IP=${RUNNER_PUBLIC_IP}"
+          } >> "$GITHUB_ENV"
 
           if [[ "${PREEXISTING_RULE_COUNT}" == "1" ]]; then
             echo "BREAK_GLASS_ALLOWLIST_PREEXISTING=true" >> "$GITHUB_ENV"

@@ -273,6 +273,50 @@ wait_for_postgres_state() {
   fail "Timed out waiting for PostgreSQL server '${server_name}' to reach state '${desired_state}'."
 }
 
+postgres_server_exists() {
+  local server_name="$1"
+  local error_file
+  local error_text
+
+  error_file="$(mktemp)"
+  if az postgres flexible-server show \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --name "${server_name}" \
+    --query id -o tsv >/dev/null 2>"${error_file}"; then
+    rm -f "${error_file}"
+    return 0
+  fi
+
+  error_text="$(tr '\n' ' ' <"${error_file}" | sed 's/[[:space:]]\+/ /g')"
+  rm -f "${error_file}"
+
+  if is_not_found_error "${error_text}"; then
+    return 1
+  fi
+
+  fail "Failed to inspect PostgreSQL server '${server_name}': ${error_text}"
+}
+
+wait_for_postgres_absence() {
+  local server_name="$1"
+  local timeout_seconds="${2:-900}"
+  local poll_interval_seconds=10
+  local max_attempts
+
+  max_attempts="$(( timeout_seconds / poll_interval_seconds ))"
+
+  for _ in $(seq 1 "${max_attempts}"); do
+    if ! postgres_server_exists "${server_name}"; then
+      log "PostgreSQL server '${server_name}' has been deleted."
+      return 0
+    fi
+
+    sleep "${poll_interval_seconds}"
+  done
+
+  fail "Timed out waiting for PostgreSQL server '${server_name}' to be deleted."
+}
+
 ensure_break_glass_key_vault_access() {
   local preexisting_rule_count
 
@@ -346,28 +390,16 @@ run_targeted_terraform_apply() {
   terraform "${terraform_args[@]}"
 }
 
-run_targeted_terraform_destroy() {
-  local terraform_args
-  local target
+reset_postgres() {
+  local server_name="$1"
 
-  ensure_terraform_init
-  ensure_break_glass_key_vault_access
-  build_terraform_targets
+  log "Deleting PostgreSQL server '${server_name}' directly in Azure to preserve the shared Terraform suffix state."
+  az postgres flexible-server delete \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --name "${server_name}" \
+    --yes >/dev/null
 
-  terraform_args=(
-    "-chdir=${TERRAFORM_DIR}"
-    "destroy"
-    "-var-file=vars/${ENVIRONMENT}.tfvars"
-    "-auto-approve"
-    "-input=false"
-  )
-
-  for target in "${TERRAFORM_DB_TARGETS[@]}"; do
-    terraform_args+=("-target=${target}")
-  done
-
-  log "Destroying only the PostgreSQL slice for ${ENVIRONMENT}."
-  terraform "${terraform_args[@]}"
+  wait_for_postgres_absence "${server_name}"
 }
 
 warm_container_app() {
@@ -599,9 +631,8 @@ case "${OPERATION}" in
       exit 0
     fi
 
-    ensure_command terraform
-    run_targeted_terraform_destroy
-    log "Reset completed for '${ENVIRONMENT}'. The PostgreSQL slice was removed, but the rest of the platform remains intact."
+    reset_postgres "${POSTGRES_SERVER_NAME}"
+    log "Reset completed for '${ENVIRONMENT}'. The PostgreSQL server was deleted in Azure, while the rest of the platform remains intact."
     ;;
 esac
 

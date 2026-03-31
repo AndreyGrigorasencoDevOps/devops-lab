@@ -51,19 +51,30 @@ jobs:
       KEEP_LATEST: "5"
       MIN_AGE_DAYS: "7"
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
-      ACR_NAME: ${{ vars.ACR_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the dev ACR cleanup job" \
+            --require-acr-name
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Cleanup DEV ACR tags
+        env:
+          ACR_NAME: ${{ steps.workflow_vars.outputs.acr_name }}
         run: bash ./scripts/acr-cleanup.sh
 
   cleanup-prod:
@@ -86,19 +97,30 @@ jobs:
       KEEP_LATEST: "10"
       MIN_AGE_DAYS: "30"
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
-      ACR_NAME: ${{ vars.ACR_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Resolve workflow variables
+        id: workflow_vars
+        env:
+          WORKFLOW_VARS_JSON: ${{ toJson(vars) }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/resolve-workflow-vars.sh \
+            --context-label "the prod ACR cleanup job" \
+            --require-acr-name
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ steps.workflow_vars.outputs.azure_client_id }}
+          tenant-id: ${{ steps.workflow_vars.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.workflow_vars.outputs.azure_subscription_id }}
 
       - name: Cleanup PROD ACR tags
+        env:
+          ACR_NAME: ${{ steps.workflow_vars.outputs.acr_name }}
         run: bash ./scripts/acr-cleanup.sh
 
   cleanup-summary:
@@ -111,11 +133,13 @@ jobs:
     steps:
       - name: Publish cleanup summary
         run: |
-          echo "## ACR Cleanup Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Job | Result |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| DEV ACR | \`${{ needs.cleanup-dev.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| PROD ACR | \`${{ needs.cleanup-prod.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Run manual dry-runs first, then use live mode once the retention summary looks correct." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## ACR Cleanup Summary"
+            echo ""
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            echo "| DEV ACR | \`${{ needs.cleanup-dev.result }}\` |"
+            echo "| PROD ACR | \`${{ needs.cleanup-prod.result }}\` |"
+            echo ""
+            echo "Run manual dry-runs first, then use live mode once the retention summary looks correct."
+          } >> "$GITHUB_STEP_SUMMARY"

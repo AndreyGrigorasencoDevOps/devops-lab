@@ -159,7 +159,8 @@ Behavior:
   - recreates only the PostgreSQL slice through targeted Terraform when it was previously reset
   - optionally warms the app through `/ready`
 - `reset`:
-  - destroys only the PostgreSQL server, database, and optional firewall rule
+  - deletes the PostgreSQL server directly in Azure so the shared Terraform random suffix stays intact
+  - leaves Terraform state in place so the next targeted `wake` recreate keeps the existing resource naming pattern
   - preserves the rest of the platform, including Key Vault, ACR, CAE, VNets, and Container App
   - is destructive and intended for longer idle periods
 
@@ -170,6 +171,7 @@ Operational notes:
 - Neither action removes fixed platform costs such as ACR Basic or Private Endpoint charges.
 - `prod` reset stays behind the GitHub `prod` environment approval path and the explicit `confirm_reset=RESET` guard.
 - When targeted Terraform DB actions run from a GitHub-hosted runner, the workflow temporarily allowlists the runner public IP on the env Key Vault and removes that rule afterward.
+- `acr-cleanup.yml` now retries transient Azure CLI and ACR 5xx-style failures before failing the run.
 
 Detailed steps:
 

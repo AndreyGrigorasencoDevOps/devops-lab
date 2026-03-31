@@ -15,6 +15,36 @@ env:
   SMOKE_HEALTH_PATH: /health
 
 jobs:
+  automation-lint:
+    name: Automation lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.8"
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -o /tmp/actionlint.tar.gz
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          /tmp/actionlint -version
+
+      - name: Run actionlint
+        run: /tmp/actionlint
+
+      - name: Run shellcheck
+        run: shellcheck -x scripts/*.sh
+
   quality:
     name: Quality (Node 24)
     runs-on: ubuntu-latest
@@ -164,7 +194,7 @@ jobs:
 
   build-push-dev-acr:
     name: Build and push image to DEV ACR
-    needs: [quality, trivy, smoke]
+    needs: [automation-lint, quality, trivy, smoke]
     runs-on: ubuntu-latest
     environment: dev
     outputs:
@@ -224,7 +254,7 @@ jobs:
   ci-summary:
     name: CI summary
     if: always()
-    needs: [quality, trivy, smoke, build-push-dev-acr]
+    needs: [automation-lint, quality, trivy, smoke, build-push-dev-acr]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -242,24 +272,27 @@ jobs:
             IMAGE_DIGEST="n/a"
           fi
 
-          echo "## CI (Push) Execution Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Event | \`${{ github.event_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Branch/Ref | \`${{ github.ref_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Quality (lint/test/sonar/audit) | \`${{ needs.quality.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Trivy | \`${{ needs.trivy.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Docker smoke | \`${{ needs.smoke.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Build/push DEV ACR | \`${{ needs.build-push-dev-acr.result }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Quality runs on Node 24." >> "$GITHUB_STEP_SUMMARY"
-          echo "Docker smoke validates the default \`node:24-alpine\` image; the published DEV image uses the same Dockerfile runtime." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Image for CD" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`image_tag\`: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`image_ref\`: \`$IMAGE_REF\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`image_digest\`: \`$IMAGE_DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "CD launch example: \`environment=dev action=apply image_tag=$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## CI (Push) Execution Summary"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Event | \`${{ github.event_name }}\` |"
+            echo "| Branch/Ref | \`${{ github.ref_name }}\` |"
+            echo "| Automation lint | \`${{ needs.automation-lint.result }}\` |"
+            echo "| Quality (lint/test/sonar/audit) | \`${{ needs.quality.result }}\` |"
+            echo "| Trivy | \`${{ needs.trivy.result }}\` |"
+            echo "| Docker smoke | \`${{ needs.smoke.result }}\` |"
+            echo "| Build/push DEV ACR | \`${{ needs.build-push-dev-acr.result }}\` |"
+            echo ""
+            echo "Quality runs on Node 24."
+            echo "Docker smoke validates the default \`node:24-alpine\` image; the published DEV image uses the same Dockerfile runtime."
+            echo ""
+            echo "### Image for CD"
+            echo ""
+            echo "- \`image_tag\`: \`$TAG\`"
+            echo "- \`image_ref\`: \`$IMAGE_REF\`"
+            echo "- \`image_digest\`: \`$IMAGE_DIGEST\`"
+            echo ""
+            echo "CD launch example: \`environment=dev action=apply image_tag=$TAG\`"
+          } >> "$GITHUB_STEP_SUMMARY"
